@@ -400,6 +400,9 @@ test('file transfer verifies SHA256, immutable bytes, and read-only downloads', 
     ).status,
     401,
   );
+  const malformed = new URL(dl.body.url);
+  malformed.searchParams.set('signature', '가'.repeat(64));
+  assert.equal((await request(system.app).get(malformed.pathname + malformed.search)).status, 401);
   const failed = await upload('dataset', bytes, undefined, undefined, '0'.repeat(64));
   await system.background.tick();
   assert.equal((await db.get('artifacts', failed.id))!.status, 'failed');

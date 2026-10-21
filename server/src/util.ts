@@ -6,8 +6,11 @@ export const id = (prefix: string) =>
   `${prefix}_${Date.now().toString(36)}${randomBytes(10).toString('hex')}`;
 export const secret = () => randomBytes(32).toString('base64url');
 export const hash = (value: string | Buffer) => createHash('sha256').update(value).digest('hex');
-export const equal = (a: string, b: string) =>
-  a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
+export function equal(a: string, b: string) {
+  const left = Buffer.from(a);
+  const right = Buffer.from(b);
+  return left.length === right.length && timingSafeEqual(left, right);
+}
 export const secondsFromNow = (seconds: number) =>
   new Date(Date.now() + seconds * 1000).toISOString();
 export function canonical(v: any): string {
