@@ -872,15 +872,49 @@ function App() {
             <section>
               <h2>운영 정책</h2>
               <p className="muted">
-                정책 변경은 새 작업에 적용됩니다. 보관 일수는 메타데이터이며 자동 삭제는 아직
-                활성화되지 않았습니다.
+                최대 실행 시간과 전송 여유를 설정합니다. 변경은 새 작업에 적용됩니다.
               </p>
               {settings && (
-                <PolicyForm
-                  value={settings}
-                  disabled={!canWrite || busy}
-                  onSubmit={(body) => act(() => api('/settings', 'PATCH', body))}
-                />
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    const data = new FormData(e.currentTarget);
+                    void act(() =>
+                      api('/settings', 'PATCH', {
+                        max_attempt_seconds: Number(data.get('max_attempt_seconds')),
+                        upload_margin_seconds: Number(data.get('upload_margin_seconds')),
+                      }),
+                    );
+                  }}
+                >
+                  <div className="form-grid">
+                    <label>
+                      최대 실행 시간 (초)
+                      <input
+                        name="max_attempt_seconds"
+                        type="number"
+                        min={1}
+                        max={604800}
+                        required
+                        defaultValue={settings.max_attempt_seconds}
+                        disabled={!canWrite || busy}
+                      />
+                    </label>
+                    <label>
+                      전송 여유 (초)
+                      <input
+                        name="upload_margin_seconds"
+                        type="number"
+                        min={30}
+                        max={3600}
+                        required
+                        defaultValue={settings.upload_margin_seconds}
+                        disabled={!canWrite || busy}
+                      />
+                    </label>
+                  </div>
+                  <button disabled={!canWrite || busy}>정책 저장</button>
+                </form>
               )}
             </section>
             <section>
@@ -1058,48 +1092,6 @@ function SchemaForm({
       </label>
       <ErrorBox error={error} />
       <button disabled={disabled}>새 불변 schema 등록</button>
-    </form>
-  );
-}
-function PolicyForm({
-  value,
-  disabled,
-  onSubmit,
-}: {
-  value: any;
-  disabled: boolean;
-  onSubmit: (body: any) => Promise<any>;
-}) {
-  const fields = {
-    checkpoint_retention_days: 'Checkpoint 보관 일수',
-    result_retention_days: '결과 보관 일수',
-    max_attempt_seconds: '최대 실행 시간 (초)',
-    upload_margin_seconds: '전송 여유 (초)',
-  };
-  return (
-    <form
-      onSubmit={(e) => {
-        e.preventDefault();
-        const data = new FormData(e.currentTarget);
-        void onSubmit(Object.fromEntries(Object.keys(fields).map((k) => [k, Number(data.get(k))])));
-      }}
-    >
-      <div className="form-grid">
-        {Object.entries(fields).map(([key, label]) => (
-          <label key={key}>
-            {label}
-            <input
-              name={key}
-              type="number"
-              min={1}
-              required
-              defaultValue={value[key]}
-              disabled={disabled}
-            />
-          </label>
-        ))}
-      </div>
-      <button disabled={disabled}>정책 저장</button>
     </form>
   );
 }

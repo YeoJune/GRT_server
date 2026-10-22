@@ -1,6 +1,6 @@
 import { createHmac, createHash } from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
-import { mkdir, stat, link, unlink, readFile } from 'node:fs/promises';
+import { mkdir, stat, link, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -27,7 +27,7 @@ export class Storage {
     return `${this.config.S3_PREFIX}${id}`;
   }
   localPath(id: string) {
-    this.key(id);
+    assert(/^[\w-]+$/.test(id), 422, 'invalid_id', 'Invalid artifact ID');
     return path.join(this.directory, id);
   }
   private signature(id: string, purpose: string, expires: number) {

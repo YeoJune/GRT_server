@@ -4,7 +4,7 @@ import type { Database } from '../db/index.js';
 import type { Config } from '../config.js';
 import { writeOnly } from '../auth.js';
 import { mutation } from '../idempotency.js';
-import { assert, canonical, hash, id, now, parse, secondsFromNow } from '../util.js';
+import { assert, canonical, hash, id, now, secondsFromNow } from '../util.js';
 import { name } from '../validation.js';
 import type { Storage } from '../services/storage.js';
 
@@ -36,7 +36,7 @@ export function artifactRoutes(db: Database, c: Config, storage: Storage) {
       );
       return res.json({ ...a, upload: await storage.url(a, 'upload', req.auth.expires_at) });
     }
-    const input = parse(uploadInput, req.body);
+    const input = uploadInput.parse(req.body);
     await mutation(
       db,
       req,
@@ -89,7 +89,9 @@ export function artifactRoutes(db: Database, c: Config, storage: Storage) {
     res.json(a);
   });
   r.post('/artifacts/uploads/:id/complete', writeOnly, async (req, res) => {
-    parse(z.object({}).strict(), req.body ?? {});
+    z.object({})
+      .strict()
+      .parse(req.body ?? {});
     await mutation(
       db,
       req,
@@ -127,15 +129,13 @@ export function artifactRoutes(db: Database, c: Config, storage: Storage) {
     });
   });
   r.post('/exports', async (req, res) => {
-    const input = parse(
-      z
-        .object({
-          job_ids: z.array(z.string()).max(50).default([]),
-          artifact_ids: z.array(z.string()).max(1000).default([]),
-        })
-        .strict(),
-      req.body,
-    );
+    const input = z
+      .object({
+        job_ids: z.array(z.string()).max(50).default([]),
+        artifact_ids: z.array(z.string()).max(1000).default([]),
+      })
+      .strict()
+      .parse(req.body);
     await mutation(
       db,
       req,
@@ -231,16 +231,14 @@ export function transferRoutes(db: Database, storage: Storage) {
   const r = Router();
   r.all('/transfers/:id', async (req, res, next) => {
     assert(storage.config.STORAGE_DRIVER === 'local', 404, 'not_found', 'Use S3 transfer URLs');
-    const q = parse(
-      z
-        .object({
-          purpose: z.enum(['upload', 'download']),
-          expires: z.string(),
-          signature: z.string(),
-        })
-        .strict(),
-      req.query,
-    );
+    const q = z
+      .object({
+        purpose: z.enum(['upload', 'download']),
+        expires: z.string(),
+        signature: z.string(),
+      })
+      .strict()
+      .parse(req.query);
     storage.verify(String(req.params.id), q.purpose, q.expires, q.signature);
     const a =
       (await db.get('artifacts', String(req.params.id))) ||

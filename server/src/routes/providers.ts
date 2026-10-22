@@ -2,12 +2,15 @@ import { Router } from 'express';
 import { z } from 'zod';
 import type { Config } from '../config.js';
 import { writeOnly } from '../auth.js';
-import { ApiError, assert, parse } from '../util.js';
+import { ApiError, assert } from '../util.js';
 
 export function providerRoutes(c: Config) {
   const r = Router();
   r.post('/providers/vast/offers/search', async (req, res) => {
-    const query = parse(z.object({ query: z.record(z.unknown()) }).strict(), req.body);
+    const query = z
+      .object({ query: z.record(z.unknown()) })
+      .strict()
+      .parse(req.body);
     assert(
       c.VAST_API_KEY,
       503,

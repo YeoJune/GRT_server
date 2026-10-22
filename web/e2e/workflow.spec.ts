@@ -15,6 +15,22 @@ test('owner registers a schema and a queued experiment; read-only session cannot
   await page.getByRole('button', { name: '+ 큐 만들기' }).click();
   await expect(page.getByRole('heading', { name: 'research active' })).toBeVisible();
   await page.getByRole('button', { name: '설정', exact: true }).click();
+  await expect(page.getByLabel('Checkpoint 보관 일수')).toHaveCount(0);
+  await expect(page.getByLabel('결과 보관 일수')).toHaveCount(0);
+  await page.getByLabel('최대 실행 시간 (초)').fill('7200');
+  await page.getByLabel('전송 여유 (초)').fill('60');
+  const [policy] = await Promise.all([
+    page.waitForResponse(
+      (response) =>
+        response.url().endsWith('/v1/settings') && response.request().method() === 'PATCH',
+    ),
+    page.getByRole('button', { name: '정책 저장', exact: true }).click(),
+  ]);
+  expect(policy.status()).toBe(200);
+  expect(await policy.json()).toMatchObject({
+    max_attempt_seconds: 7200,
+    upload_margin_seconds: 60,
+  });
   await page.getByRole('button', { name: '새 불변 schema 등록' }).click();
   await expect(page.getByText('등록된 schema (1)')).toBeVisible();
   await page.getByRole('button', { name: '실험', exact: true }).click();

@@ -7,21 +7,22 @@ import * as initial from './migrations/001_initial.js';
 import { now } from '../util.js';
 
 export type RecordData = { id: string; created_at: string; [key: string]: any };
-export type Table = (typeof initial.tables)[number];
+type Table = (typeof initial.tables)[number];
 export class Store {
   constructor(public sql: Knex | Knex.Transaction) {}
-  async get<T extends RecordData = RecordData>(table: Table, id: string): Promise<T | undefined> {
+  async get(table: Table, id: string): Promise<RecordData | undefined> {
     const row = await this.sql(table).where({ id }).first();
     return row ? JSON.parse(row.body) : undefined;
   }
-  async list<T extends RecordData = RecordData>(table: Table): Promise<T[]> {
+  async list(table: Table): Promise<RecordData[]> {
     return (await this.sql(table).orderBy('id', 'desc')).map((row) => JSON.parse(row.body));
   }
   async put<T extends RecordData>(table: Table, data: T): Promise<T> {
+    const body = JSON.stringify(data);
     await this.sql(table)
-      .insert({ id: data.id, created_at: data.created_at, body: JSON.stringify(data) })
+      .insert({ id: data.id, created_at: data.created_at, body })
       .onConflict('id')
-      .merge({ body: JSON.stringify(data) });
+      .merge({ body });
     return data;
   }
   async remove(table: Table, id: string) {
@@ -43,8 +44,6 @@ export class Database extends Store {
         await tx.put('settings', {
           id: 'settings',
           created_at: now(),
-          checkpoint_retention_days: 30,
-          result_retention_days: 365,
           max_attempt_seconds: 172800,
           upload_margin_seconds: 300,
         });

@@ -54,7 +54,7 @@ export const workerInput = z
     extensions: object.default({}),
   })
   .strict();
-export const leaseInput = z.object({
+const leaseInput = z.object({
   worker_id: z.string(),
   lease_token: z.string().min(20),
   generation: z.number().int().positive(),

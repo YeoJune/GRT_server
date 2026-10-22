@@ -4,10 +4,9 @@ import type { Config } from '../config.js';
 import type { Database } from '../db/index.js';
 import { audit, writeOnly } from '../auth.js';
 import { mutation } from '../idempotency.js';
-import { ApiError, assert, canonical, hash, id, now, page, parse } from '../util.js';
+import { assert, canonical, hash, id, now, page } from '../util.js';
 import { finishInput, heartbeatInput, jobInput, name, object, workerInput } from '../validation.js';
 import {
-  ajv,
   assign,
   attemptView,
   compatibility,
@@ -39,7 +38,7 @@ export function experimentRoutes(db: Database, c: Config) {
       features: {
         vast_offer_search: !!c.VAST_API_KEY,
         paid_allocations: false,
-        notebook_helper: false,
+        notebook_helper: true,
         automatic_retention: false,
         grt_scientific_validation: false,
         training_resume: false,
@@ -53,19 +52,17 @@ export function experimentRoutes(db: Database, c: Config) {
     res.json(row);
   });
   r.post('/schemas', writeOnly, async (req, res) => {
-    const input = parse(
-      z
-        .object({
-          id: name.regex(/^[\w/-]+$/),
-          runner: name,
-          name,
-          json_schema: object,
-          report_schema: object,
-          extensions: object.default({}),
-        })
-        .strict(),
-      req.body,
-    );
+    const input = z
+      .object({
+        id: name.regex(/^[\w/-]+$/),
+        runner: name,
+        name,
+        json_schema: object,
+        report_schema: object,
+        extensions: object.default({}),
+      })
+      .strict()
+      .parse(req.body);
     compileSchema(input.json_schema);
     compileSchema(input.report_schema);
     await mutation(
@@ -112,7 +109,7 @@ export function experimentRoutes(db: Database, c: Config) {
     );
   });
   r.post('/queues', writeOnly, async (req, res) => {
-    const input = parse(z.object({ name }).strict(), req.body);
+    const input = z.object({ name }).strict().parse(req.body);
     await mutation(
       db,
       req,
@@ -138,7 +135,10 @@ export function experimentRoutes(db: Database, c: Config) {
     );
   });
   r.post('/queues/:id/actions', writeOnly, async (req, res) => {
-    const input = parse(z.object({ action: z.enum(['pause', 'resume']) }).strict(), req.body);
+    const input = z
+      .object({ action: z.enum(['pause', 'resume']) })
+      .strict()
+      .parse(req.body);
     await mutation(db, req, res, async (tx) => {
       const q = await tx.get('queues', String(req.params.id));
       assert(q, 404, 'not_found', 'Queue not found');
@@ -173,16 +173,14 @@ export function experimentRoutes(db: Database, c: Config) {
     });
   });
   r.get('/jobs', async (req, res) => {
-    const filters = parse(
-      z
-        .object({
-          queue: z.string().optional(),
-          status: z.string().optional(),
-          campaign: z.string().optional(),
-        })
-        .passthrough(),
-      req.query,
-    );
+    const filters = z
+      .object({
+        queue: z.string().optional(),
+        status: z.string().optional(),
+        campaign: z.string().optional(),
+      })
+      .passthrough()
+      .parse(req.query);
     const jobs = (await db.list('jobs')).filter(
       (j) =>
         (!filters.queue || j.queue === filters.queue) &&
@@ -201,7 +199,10 @@ export function experimentRoutes(db: Database, c: Config) {
     ),
   );
   r.post('/jobs/batch', writeOnly, async (req, res) => {
-    const input = parse(z.object({ jobs: z.array(jobInput).min(1).max(50) }).strict(), req.body);
+    const input = z
+      .object({ jobs: z.array(jobInput).min(1).max(50) })
+      .strict()
+      .parse(req.body);
     assert(
       input.jobs.every((j) => j.dispatch === 'queued'),
       422,
@@ -230,16 +231,14 @@ export function experimentRoutes(db: Database, c: Config) {
     });
   });
   r.patch('/jobs/:id', writeOnly, async (req, res) => {
-    const input = parse(
-      z
-        .object({
-          queue: name.optional(),
-          priority: z.number().int().min(-10000).max(10000).optional(),
-        })
-        .strict()
-        .refine((v) => Object.keys(v).length > 0),
-      req.body,
-    );
+    const input = z
+      .object({
+        queue: name.optional(),
+        priority: z.number().int().min(-10000).max(10000).optional(),
+      })
+      .strict()
+      .refine((v) => Object.keys(v).length > 0)
+      .parse(req.body);
     await mutation(db, req, res, async (tx) => {
       const job = await tx.get('jobs', String(req.params.id));
       assert(job, 404, 'not_found', 'Job not found');
@@ -260,16 +259,14 @@ export function experimentRoutes(db: Database, c: Config) {
     });
   });
   r.post('/jobs/:id/actions', writeOnly, async (req, res) => {
-    const input = parse(
-      z
-        .object({
-          action: z.enum(['cancel', 'retry', 'clone']),
-          termination_evidence: z.string().min(10).max(4000).optional(),
-          overrides: object.optional(),
-        })
-        .strict(),
-      req.body,
-    );
+    const input = z
+      .object({
+        action: z.enum(['cancel', 'retry', 'clone']),
+        termination_evidence: z.string().min(10).max(4000).optional(),
+        overrides: object.optional(),
+      })
+      .strict()
+      .parse(req.body);
     await mutation(
       db,
       req,
@@ -363,7 +360,7 @@ export function experimentRoutes(db: Database, c: Config) {
     res.json({ ...w, active_attempt: a ? attemptView(a) : null });
   });
   r.post('/workers', writeOnly, async (req, res) => {
-    const input = parse(workerInput, req.body);
+    const input = workerInput.parse(req.body);
     assert(
       Date.parse(input.deadline_at) > Date.now(),
       422,
@@ -420,7 +417,10 @@ export function experimentRoutes(db: Database, c: Config) {
     );
   });
   r.post('/workers/:id/actions', writeOnly, async (req, res) => {
-    const input = parse(z.object({ action: z.enum(['drain', 'resume']) }).strict(), req.body);
+    const input = z
+      .object({ action: z.enum(['drain', 'resume']) })
+      .strict()
+      .parse(req.body);
     await mutation(db, req, res, async (tx) => {
       const w = await tx.get('workers', String(req.params.id));
       assert(w, 404, 'not_found', 'Worker not found');
@@ -428,7 +428,7 @@ export function experimentRoutes(db: Database, c: Config) {
     });
   });
   r.post('/workers/:id/claim', writeOnly, async (req, res) => {
-    const input = parse(z.object({ queue: name }).strict(), req.body);
+    const input = z.object({ queue: name }).strict().parse(req.body);
     await mutation(
       db,
       req,
@@ -475,7 +475,7 @@ export function experimentRoutes(db: Database, c: Config) {
     );
   });
   r.post('/attempts/:id/heartbeat', writeOnly, async (req, res) => {
-    const input = parse(heartbeatInput, req.body);
+    const input = heartbeatInput.parse(req.body);
     await mutation(db, req, res, async (tx) => {
       const { attempt, job } = await ownership(tx, String(req.params.id), input);
       if (input.last_verified_checkpoint_id) {
@@ -519,7 +519,7 @@ export function experimentRoutes(db: Database, c: Config) {
     });
   });
   r.post('/attempts/:id/finish', writeOnly, async (req, res) => {
-    const input = parse(finishInput, req.body);
+    const input = finishInput.parse(req.body);
     await mutation(
       db,
       req,

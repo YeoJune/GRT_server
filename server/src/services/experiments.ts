@@ -2,22 +2,12 @@ import AjvModule from 'ajv';
 import addFormatsModule from 'ajv-formats';
 import type { Config } from '../config.js';
 import type { RecordData, Store } from '../db/index.js';
-import {
-  ApiError,
-  assert,
-  canonical,
-  hash,
-  id,
-  now,
-  publicAttempt,
-  secret,
-  secondsFromNow,
-} from '../util.js';
+import { ApiError, assert, canonical, hash, id, now, secret } from '../util.js';
 import { jobInput } from '../validation.js';
 
 const Ajv = AjvModule as unknown as typeof AjvModule.default;
 const addFormats = addFormatsModule as unknown as typeof addFormatsModule.default;
-export const ajv = new Ajv({ allErrors: true, strict: true, useDefaults: true });
+const ajv = new Ajv({ allErrors: true, strict: true, useDefaults: true });
 addFormats(ajv);
 export function compileSchema(schema: any) {
   try {
@@ -71,7 +61,7 @@ export async function validateJob(tx: Store, raw: any) {
       'Dataset artifact must be verified',
     );
   }
-  return { input, schema, queue, settings: settings! };
+  return { input, settings: settings! };
 }
 export async function createJob(tx: Store, raw: any, c: Config, credentialExpiresAt?: string) {
   const { input, settings } = await validateJob(tx, raw);
@@ -202,8 +192,9 @@ export async function ownership(tx: Store, attemptId: string, input: any) {
   return { attempt: a, job };
 }
 export function attemptView(a: RecordData) {
+  const { lease_hash, ...safe } = a;
   return {
-    ...publicAttempt(a),
+    ...safe,
     stale: a.status === 'running' && Date.parse(a.lease_expires_at) <= Date.now(),
   };
 }

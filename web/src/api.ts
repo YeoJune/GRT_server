@@ -9,7 +9,7 @@ export class ApiError extends Error {
     super(message);
   }
 }
-export async function api<T = any>(path: string, method = 'GET', body?: unknown): Promise<T> {
+export async function api(path: string, method = 'GET', body?: unknown): Promise<any> {
   const response = await fetch(`/v1${path}`, {
     method,
     credentials: 'same-origin',
@@ -30,7 +30,7 @@ export async function api<T = any>(path: string, method = 'GET', body?: unknown)
   return data;
 }
 export async function all(path: string): Promise<any[]> {
-  let data: any[] = [];
+  const data: any[] = [];
   let cursor: string | null = null;
   do {
     const page: any = await api(

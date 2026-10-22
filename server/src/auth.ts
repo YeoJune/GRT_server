@@ -1,8 +1,8 @@
 import argon2 from 'argon2';
 import type { NextFunction, Request, Response } from 'express';
 import type { Config } from './config.js';
-import type { Database, Store, RecordData } from './db/index.js';
-import { assert, equal, hash, id, now, secret, secondsFromNow } from './util.js';
+import type { Database, Store } from './db/index.js';
+import { assert, equal, hash, id, now, secret } from './util.js';
 
 export interface Principal {
   kind: 'write' | 'read-only';
@@ -69,7 +69,7 @@ export async function mintToken(
 export async function verifyLogin(tx: Store, input: any) {
   if (input.token) {
     const t = await verifyToken(tx, input.token);
-    return { kind: t.kind, method: 'token', token_id: t.id, expires_at: t.expires_at } as Principal;
+    return { kind: t.kind, method: 'token' as const, token_id: t.id, expires_at: t.expires_at };
   }
   const account = await tx.get('accounts', 'owner');
   // A fixed Argon2 workload on missing/wrong usernames limits account timing differences.
@@ -82,73 +82,65 @@ export async function verifyLogin(tx: Store, input: any) {
     'unauthorized',
     'Invalid account or password',
   );
-  return { kind: 'write', method: 'password', expires_at: secondsFromNow(28800) } as Principal;
+  return { kind: 'write' as const, method: 'password' as const };
 }
 export function authentication(db: Database, c: Config) {
   return async (req: Request, _res: Response, next: NextFunction) => {
-    try {
-      req.auth = await db.write(async (tx) => {
-        if (req.headers.authorization) {
-          const match = /^Bearer ([^\s]+)$/.exec(req.headers.authorization);
-          assert(match, 401, 'unauthorized', 'Expected Bearer token');
-          const t = await verifyToken(tx, match[1]);
-          return { kind: t.kind, expires_at: t.expires_at, token_id: t.id, method: 'token' };
-        }
-        const raw = req.cookies[cookieName];
-        assert(typeof raw === 'string', 401, 'unauthorized', 'Login required');
-        const s = await tx.get('sessions', hash(raw));
+    req.auth = await db.write(async (tx) => {
+      if (req.headers.authorization) {
+        const match = /^Bearer ([^\s]+)$/.exec(req.headers.authorization);
+        assert(match, 401, 'unauthorized', 'Expected Bearer token');
+        const t = await verifyToken(tx, match[1]);
+        return { kind: t.kind, expires_at: t.expires_at, token_id: t.id, method: 'token' };
+      }
+      const raw = req.cookies[cookieName];
+      assert(typeof raw === 'string', 401, 'unauthorized', 'Login required');
+      const s = await tx.get('sessions', hash(raw));
+      assert(
+        s &&
+          Date.parse(s.expires_at) > Date.now() &&
+          Date.parse(s.last_used_at) + c.SESSION_IDLE_SECONDS * 1000 > Date.now(),
+        401,
+        'unauthorized',
+        'Session expired',
+      );
+      let expires = s.expires_at;
+      if (s.token_id) {
+        const t = await tx.get('tokens', s.token_id);
         assert(
-          s &&
-            Date.parse(s.expires_at) > Date.now() &&
-            Date.parse(s.last_used_at) + c.SESSION_IDLE_SECONDS * 1000 > Date.now(),
+          t && !t.revoked_at && Date.parse(t.expires_at) > Date.now(),
           401,
           'unauthorized',
-          'Session expired',
+          'Underlying token expired or revoked',
         );
-        let expires = s.expires_at;
-        if (s.token_id) {
-          const t = await tx.get('tokens', s.token_id);
-          assert(
-            t && !t.revoked_at && Date.parse(t.expires_at) > Date.now(),
-            401,
-            'unauthorized',
-            'Underlying token expired or revoked',
-          );
-          await tx.put('tokens', { ...t, last_used_at: now() });
-          expires = new Date(Math.min(Date.parse(expires), Date.parse(t.expires_at))).toISOString();
-        }
-        await tx.put('sessions', { ...s, last_used_at: now() });
-        return {
-          kind: s.kind,
-          method: s.method,
-          expires_at: expires,
-          token_id: s.token_id,
-          session_id: s.id,
-          csrf_token: s.csrf_token,
-        };
-      });
-      if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && req.auth.session_id) {
-        assert(
-          req.get('origin') === c.APP_ORIGIN,
-          403,
-          'invalid_origin',
-          'Origin does not match APP_ORIGIN',
-        );
-        assert(req.get('x-csrf-token') === req.auth.csrf_token, 403, 'csrf', 'CSRF token required');
+        await tx.put('tokens', { ...t, last_used_at: now() });
+        expires = new Date(Math.min(Date.parse(expires), Date.parse(t.expires_at))).toISOString();
       }
-      next();
-    } catch (e) {
-      next(e);
+      await tx.put('sessions', { ...s, last_used_at: now() });
+      return {
+        kind: s.kind,
+        method: s.method,
+        expires_at: expires,
+        token_id: s.token_id,
+        session_id: s.id,
+        csrf_token: s.csrf_token,
+      };
+    });
+    if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && req.auth.session_id) {
+      assert(
+        req.get('origin') === c.APP_ORIGIN,
+        403,
+        'invalid_origin',
+        'Origin does not match APP_ORIGIN',
+      );
+      assert(req.get('x-csrf-token') === req.auth.csrf_token, 403, 'csrf', 'CSRF token required');
     }
+    next();
   };
 }
 export const writeOnly = (req: Request, _res: Response, next: NextFunction) => {
-  try {
-    assert(req.auth.kind === 'write', 403, 'forbidden', 'Write permission required');
-    next();
-  } catch (e) {
-    next(e);
-  }
+  assert(req.auth.kind === 'write', 403, 'forbidden', 'Write permission required');
+  next();
 };
 export async function audit(
   tx: Store,

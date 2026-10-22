@@ -18,6 +18,8 @@ ID·생성 시각에는 SQL index가 있으며, 현재 상태·campaign·호환 
 
 DB 변경은 Knex migration으로 관리합니다. SQLite는 WAL + 단일 연결, PostgreSQL은 transaction의 singleton row lock으로 제어 변경·claim·중복 키 저장을 직렬화합니다. 다중 프로세스 운영은 현재 범위가 아닙니다. 백그라운드 검증기는 서버 프로세스 하나에서 실행하세요.
 
+운영 설정은 실제 적용되는 최대 실행 시간과 전송 여유만 제공합니다. 자동 삭제가 구현되지 않은 보관 일수 입력은 제공하지 않습니다. 이전 DB의 설정값과 원본 파일은 삭제하지 않습니다.
+
 ## 인증과 로그
 
 원문 API 토큰과 lease는 난수이며 DB에는 SHA256 해시만 저장합니다. 비밀번호는 Argon2id를 사용합니다. 브라우저 세션도 서버에서 매 요청 검증합니다. Bearer 헤더가 있으면 cookie보다 우선하며, 잘못된 Bearer에서 cookie로 fallback하지 않습니다.
@@ -48,4 +50,4 @@ Export는 요청 시 verified artifact ID/hash/version 집합을 고정합니다
 
 ## 설계와 차이
 
-FastAPI 대신 Express를 사용합니다. 초기 운영을 간단히 하기 위해 로컬 저장소를 기본 제공하고 S3를 선택 가능하게 했습니다. 임대 비용이 발생하는 Vast 조작, independent watchdog, GRT helper 수정, checkpoint 복원, 자동 retention은 구현하지 않았고 capabilities에 공개했습니다. 무한 성공 응답이나 가짜 allocation을 반환하지 않습니다.
+FastAPI 대신 Express를 사용합니다. 초기 운영을 간단히 하기 위해 로컬 저장소를 기본 제공하고 S3를 선택 가능하게 했습니다. GRT 공통 helper는 `generic/1`과 불변 schema로 선택적 upload/queue 연결을 제공하며 실제 연구 Config·원본 결과와 서버 검증용 envelope를 구분합니다. 임대 비용이 발생하는 Vast 조작, independent watchdog, 서버 checkpoint 자동 복원, 자동 retention과 GRT 과학적 완료 검증은 구현하지 않았고 capabilities에 공개했습니다. 무한 성공 응답이나 가짜 allocation을 반환하지 않습니다.

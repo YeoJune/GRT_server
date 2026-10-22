@@ -1,6 +1,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import dotenv from 'dotenv';
 import { tmpdir } from 'node:os';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -120,6 +121,7 @@ async function upload(
 before(async () => {
   directory = await mkdtemp(path.join(tmpdir(), 'grt-api-test-'));
   const config = loadConfig({
+    ...dotenv.parse(await readFile(new URL('../../.env.example', import.meta.url))),
     NODE_ENV: 'test',
     SQLITE_FILENAME: path.join(directory, 'db.sqlite'),
     STORAGE_DIRECTORY: path.join(directory, 'files'),
@@ -205,8 +207,43 @@ test('read-only cannot write even through POST actions, but can validate', async
   ]) {
     assert.equal((await call('post', route, {}, read)).status, 403, route);
   }
-  assert.equal((await call('patch', '/settings', { result_retention_days: 30 }, read)).status, 403);
+  assert.equal((await call('patch', '/settings', { upload_margin_seconds: 60 }, read)).status, 403);
   assert.equal((await call('post', '/jobs/validate', jobBody(), read)).status, 200);
+});
+
+test('settings affect new jobs and reject unsupported retention options', async () => {
+  const original = (await call('get', '/settings')).body;
+  assert.equal(original.checkpoint_retention_days, undefined);
+  assert.equal(original.result_retention_days, undefined);
+  const before = await call('post', '/jobs', jobBody('before policy change'));
+  assert.equal(before.status, 201);
+  try {
+    const update = await call('patch', '/settings', {
+      max_attempt_seconds: 7200,
+      upload_margin_seconds: 60,
+    });
+    assert.equal(update.status, 200);
+    const after = await call('post', '/jobs', jobBody('after policy change'));
+    assert.equal(after.status, 201);
+    assert.equal(after.body.policy.max_attempt_seconds, 7200);
+    assert.equal(after.body.upload_margin_seconds, 60);
+    const unchanged = (await call('get', `/jobs/${before.body.id}`)).body;
+    assert.equal(unchanged.policy.max_attempt_seconds, original.max_attempt_seconds);
+    assert.equal(unchanged.upload_margin_seconds, original.upload_margin_seconds);
+    for (const field of ['checkpoint_retention_days', 'result_retention_days']) {
+      const rejected = await call('patch', '/settings', { [field]: 30 });
+      assert.equal(rejected.status, 422);
+    }
+    assert.equal((await call('patch', '/settings', {})).status, 422);
+  } finally {
+    const restored = await call('patch', '/settings', {
+      max_attempt_seconds: original.max_attempt_seconds,
+      upload_margin_seconds: original.upload_margin_seconds,
+    });
+    assert.equal(restored.status, 200);
+    for (const job of (await db.list('jobs')).filter((j) => j.name.endsWith('policy change')))
+      await call('post', `/jobs/${job.id}/actions`, { action: 'cancel' });
+  }
 });
 
 test('schema validation returns field errors, preserves defaults and rejects core typos', async () => {

@@ -40,8 +40,6 @@ export function assert(
 ): asserts condition {
   if (!condition) throw new ApiError(status, code, message);
 }
-export const parse = <S extends z.ZodTypeAny>(schema: S, body: unknown): z.output<S> =>
-  schema.parse(body);
 export function page(req: Request, res: Response, items: any[]) {
   const q = z
     .object({
@@ -68,9 +66,5 @@ export function page(req: Request, res: Response, items: any[]) {
 }
 export function publicToken(t: any) {
   const { secret_hash, ...safe } = t;
-  return safe;
-}
-export function publicAttempt(t: any) {
-  const { lease_hash, ...safe } = t;
   return safe;
 }

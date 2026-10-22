@@ -46,16 +46,18 @@ Cookie 세션은 기본 절대 8시간 / idle 30분입니다. Token session은 �
 
 ## 설정 / Schema / 큐
 
-| 경로                                 | 본문 / 의미                                                                                                           |
-| ------------------------------------ | --------------------------------------------------------------------------------------------------------------------- |
-| `GET /capabilities`                  | 기능·한도·heartbeat·lease·저장소 종류                                                                                 |
-| `GET/PATCH /settings`                | `checkpoint_retention_days,result_retention_days,max_attempt_seconds,upload_margin_seconds`. PATCH는 일부 필드만 가능 |
-| `GET /schemas` / `GET /schemas/{id}` | 불변 schema 조회                                                                                                      |
-| `POST /schemas`                      | `{id,name,runner,json_schema,report_schema,extensions?}`. [예제](../examples/schema.json)                             |
-| `GET/POST /queues`                   | 생성 `{name}`                                                                                                         |
-| `POST /queues/{id}/actions`          | `{action:"pause"\|"resume"}`                                                                                          |
+| 경로                                 | 본문 / 의미                                                                               |
+| ------------------------------------ | ----------------------------------------------------------------------------------------- |
+| `GET /capabilities`                  | 기능·한도·heartbeat·lease·저장소 종류                                                     |
+| `GET/PATCH /settings`                | `max_attempt_seconds,upload_margin_seconds`. PATCH는 일부 필드만 가능                     |
+| `GET /schemas` / `GET /schemas/{id}` | 불변 schema 조회                                                                          |
+| `POST /schemas`                      | `{id,name,runner,json_schema,report_schema,extensions?}`. [예제](../examples/schema.json) |
+| `GET/POST /queues`                   | 생성 `{name}`                                                                             |
+| `POST /queues/{id}/actions`          | `{action:"pause"\|"resume"}`                                                              |
 
 현재 실행 adapter는 `generic/1`만 지원합니다. JSON Schema draft-07 strict mode를 사용하며 schema의 default를 복제한 spec에 적용합니다. Schema를 나중에 바꾸지 않고 새 ID를 등록합니다. `spec.target_steps`는 양의 정수여야 합니다.
+
+설정은 새 작업에 적용합니다. 동작하지 않던 보관 일수 입력은 제거했으며 PATCH에 해당 필드를 보내면 422입니다. 기존 DB에 저장된 보관 일수 값과 파일은 그대로 보존하고 자동 삭제하지 않습니다.
 
 ## 실험
 

@@ -13,7 +13,7 @@ import {
   verifyToken,
   writeOnly,
 } from '../auth.js';
-import { assert, hash, now, page, parse, publicToken, secret, secondsFromNow } from '../util.js';
+import { assert, hash, now, page, publicToken, secret, secondsFromNow } from '../util.js';
 import { kind, name, time } from '../validation.js';
 import { mutation } from '../idempotency.js';
 
@@ -42,13 +42,12 @@ export function loginRoutes(db: Database, c: Config) {
         'invalid_origin',
         'Origin does not match APP_ORIGIN',
       );
-      const input = parse(
-        z.union([
+      const input = z
+        .union([
           z.object({ username: name, password: z.string().min(1).max(1024) }).strict(),
           z.object({ token: z.string().min(1).max(512) }).strict(),
-        ]),
-        req.body,
-      );
+        ])
+        .parse(req.body);
       const raw = secret();
       const session = await db
         .write(async (tx) => {
@@ -110,17 +109,15 @@ export function accountRoutes(db: Database, c: Config) {
     res.clearCookie(cookieName, cookieOptions(c)).status(204).end();
   });
   r.post('/account/actions', writeOnly, async (req, res) => {
-    const input = parse(
-      z
-        .object({
-          action: z.enum(['change_password', 'revoke_sessions']),
-          password: z.string().max(1024).optional(),
-          token: z.string().max(512).optional(),
-          new_password: z.string().min(12).max(1024).optional(),
-        })
-        .strict(),
-      req.body,
-    );
+    const input = z
+      .object({
+        action: z.enum(['change_password', 'revoke_sessions']),
+        password: z.string().max(1024).optional(),
+        token: z.string().max(512).optional(),
+        new_password: z.string().min(12).max(1024).optional(),
+      })
+      .strict()
+      .parse(req.body);
     await db.write(async (tx) => {
       const owner = await tx.get('accounts', 'owner');
       if (req.auth.session_id) {
@@ -155,10 +152,10 @@ export function accountRoutes(db: Database, c: Config) {
   });
   r.get('/tokens', async (req, res) => page(req, res, (await db.list('tokens')).map(publicToken)));
   r.post('/tokens', writeOnly, async (req, res) => {
-    const input = parse(
-      z.object({ name, kind, expires_at: time.default(() => secondsFromNow(604800)) }).strict(),
-      req.body,
-    );
+    const input = z
+      .object({ name, kind, expires_at: time.default(() => secondsFromNow(604800)) })
+      .strict()
+      .parse(req.body);
     await mutation(
       db,
       req,
@@ -172,7 +169,7 @@ export function accountRoutes(db: Database, c: Config) {
     );
   });
   r.patch('/tokens/:id', writeOnly, async (req, res) => {
-    const input = parse(z.object({ expires_at: time }).strict(), req.body);
+    const input = z.object({ expires_at: time }).strict().parse(req.body);
     await mutation(db, req, res, async (tx) => {
       const token = await tx.get('tokens', String(req.params.id));
       assert(token, 404, 'not_found', 'Token not found');
@@ -204,19 +201,15 @@ export function accountRoutes(db: Database, c: Config) {
   );
   r.get('/settings', async (_req, res) => res.json(await db.get('settings', 'settings')));
   r.patch('/settings', writeOnly, async (req, res) => {
-    const input = parse(
-      z
-        .object({
-          checkpoint_retention_days: z.number().int().positive(),
-          result_retention_days: z.number().int().positive(),
-          max_attempt_seconds: z.number().int().positive().max(604800),
-          upload_margin_seconds: z.number().int().min(30).max(3600),
-        })
-        .strict()
-        .partial()
-        .refine((v) => Object.keys(v).length > 0),
-      req.body,
-    );
+    const input = z
+      .object({
+        max_attempt_seconds: z.number().int().positive().max(604800),
+        upload_margin_seconds: z.number().int().min(30).max(3600),
+      })
+      .strict()
+      .partial()
+      .refine((v) => Object.keys(v).length > 0)
+      .parse(req.body);
     await mutation(db, req, res, async (tx) => {
       const settings = await tx.get('settings', 'settings');
       const updated = await tx.put('settings', { ...settings!, ...input });

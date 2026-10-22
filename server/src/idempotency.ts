@@ -1,11 +1,11 @@
 import type { Request, Response } from 'express';
 import type { Database, Store } from './db/index.js';
-import { assert, canonical, hash, id, now } from './util.js';
+import { assert, canonical, hash, now } from './util.js';
 
-export type Reply = { status?: number; body?: any; headers?: Record<string, string> };
+type Reply = { status?: number; body?: any; headers?: Record<string, string> };
 // Lease secrets are never stored in response caches. The original lease is needed to
 // recover execution permission after a lost response; otherwise confirm termination and retry.
-export function redact(value: any): any {
+function redact(value: any): any {
   if (Array.isArray(value)) return value.map(redact);
   if (value && typeof value === 'object')
     return Object.fromEntries(
@@ -83,7 +83,6 @@ export async function mutation(
         reply: redact(result),
         lease_issued: JSON.stringify(result.body || {}).includes('\"lease_token\"'),
         state: result.status === 202 ? 'accepted' : 'completed',
-        operation_id: id('op'),
       });
     return result;
   });
