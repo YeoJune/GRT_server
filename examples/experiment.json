@@ -1,0 +1,19 @@
+{
+  "name": "baseline-seed42",
+  "queue": "research",
+  "priority": 0,
+  "dispatch": "queued",
+  "runner": "generic/1",
+  "schema_id": "generic_v1",
+  "spec": { "target_steps": 1000, "seed": 42 },
+  "requirements": { "gpu_count": 1, "labels": [] },
+  "policy": {
+    "max_attempt_seconds": 7200,
+    "eta_seconds": null,
+    "checkpointable": true,
+    "require_posthoc": false,
+    "required_artifact_kinds": ["report", "config", "provenance"]
+  },
+  "labels": { "campaign": "baseline" },
+  "extensions": {}
+}

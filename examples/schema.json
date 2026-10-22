@@ -1,0 +1,26 @@
+{
+  "id": "generic_v1",
+  "name": "Generic experiment v1",
+  "runner": "generic/1",
+  "json_schema": {
+    "type": "object",
+    "required": ["target_steps", "seed"],
+    "properties": {
+      "target_steps": { "type": "integer", "minimum": 1, "description": "Training target steps" },
+      "seed": { "type": "integer", "default": 42 }
+    },
+    "additionalProperties": false
+  },
+  "report_schema": {
+    "type": "object",
+    "required": ["spec_sha256", "config_sha256", "completed_steps"],
+    "properties": {
+      "spec_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+      "config_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+      "completed_steps": { "type": "integer", "minimum": 0 },
+      "posthoc_completed": { "type": "boolean" },
+      "summary": { "type": "object" }
+    },
+    "additionalProperties": true
+  }
+}
