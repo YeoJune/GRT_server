@@ -1,5 +1,7 @@
 # AWS 배포 후 기능 점검안
 
+바로 실행하려면 [실행 가이드](20261023_aws_test_execution_guide.md)와 [임시 테스트 노트북](https://github.com/YeoJune/GRT/blob/main/notebooks/tmp_server_acceptance.ipynb)으로 시작한다. 아래는 빠짐없이 확인하기 위한 기능별 판정표다.
+
 작성: 2026-10-23. 대상: `https://grt.grtserver.cloud`, Amazon Linux 2023 ARM64 / t4g.small / 20GB, SQLite·로컬 파일 저장.
 
 [현재 API](api.md), [구현 범위](../README.md#구현-경계), [GRT 연결 안내](https://github.com/YeoJune/GRT/blob/main/docs/20261022_server_integration.md)를 기준으로 한다. 아래는 **실행 계획이며 통과 기록이 아니다.** 미구현 설계는 성공 기준에 포함하지 않는다.
