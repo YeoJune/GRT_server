@@ -121,6 +121,8 @@ npm run test:e2e
 
 API 테스트는 동시 claim, 권한·CSRF·토큰 폐기, 원자적 batch, stale 복구와 구세대 차단, 파일 hash 검증, 완료 검증, ZIP 생성을 포함합니다. 실제 AWS / RDS / Vast / Colab / Kaggle 연결과 GPU 학습은 별도 환경 검증이 필요합니다.
 
+AWS 배포 후 실제 환경 점검은 [기능 점검안](docs/20261023_aws_acceptance_test_plan.md)을 따릅니다. 작은 실험부터 큐·장애 복구·백업 복원까지 순서와 판정 기준을 정리했습니다.
+
 ## 구현 경계
 
 이 버전은 실제 동작하는 제어 서버의 첫 구현입니다. 설계의 모든 외부 시스템이 연결된 상태는 아닙니다.
