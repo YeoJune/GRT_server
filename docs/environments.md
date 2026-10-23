@@ -90,6 +90,14 @@ finally:
 
 Secret은 부모 노트북에서 읽어 자식 프로세스의 환경으로만 전달합니다. W&B 사용 작업이면 같은 방식으로 해당 플랫폼의 `WANDB_API_KEY`를 `worker_env`에 추가하세요. 한 실험만 실행하려면 인자에 `--once`를 추가합니다. 큐가 비었거나 pause/drain·호환 조건 때문에 배정할 작업이 없으면 worker는 종료하므로 새 작업 제출 후 다시 실행합니다. Deadline은 실제 세션 상한이며 자동 연장하지 않습니다.
 
+## Prepared 데이터 캐시 선택
+
+기존 로컬 데이터 재사용이 기본입니다. GRT에서 `job.prepare_data()` 후 `cached = job.cache_prepared()`를 한 번 실행하면 서버에 공유 dataset ZIP을 보관합니다. `cached['extensions']['manifest_sha256']`가 캐시 ID이며 같은 manifest·파일 hash는 재사용합니다. 다른 세션에서는 `job.prepare_data(server_cache='<manifest SHA256>')`로 명시적으로 다운로드할 수 있습니다. 노트북 준비 셀에도 다운로드 hash와 서버 보관 옵션이 있습니다.
+
+큐 worker는 위 예제의 `--prepared-dir <경로>` 대신 `--prepared-from-server`를 선택하세요. 작업의 dataset_sha256으로 조회하며 로컬 파일이 이미 검증되어 있으면 다시 받지 않습니다. 캐시가 없거나 hash가 다르면 실행하지 않습니다. 모델·예산만 달라진 실험은 같은 데이터를 재사용합니다.
+
+캐시는 실험 삭제와 별개로 보존하며 자동 만료하지 않습니다. 기본 파일 한도는 1GiB이므로 큰 데이터에는 MAX_ARTIFACT_BYTES와 디스크 여유를 확인하세요. 토큰·연결 journal·학습 결과를 데이터 ZIP에 넣지 않고 manifest가 지정한 파일만 보관합니다.
+
 ## 데스크톱: 큐 worker
 
 Linux/WSL의 CUDA 환경을 기준으로 합니다. 제출한 commit의 GRT checkout과 동일한 prepared 데이터를 준비합니다. 데이터 생성은 GRT 노트북 또는 [workflow](https://github.com/YeoJune/GRT/blob/main/docs/workflow.md)를 따릅니다.

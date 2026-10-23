@@ -10,6 +10,24 @@ import type { Storage } from '../services/storage.js';
 
 export function artifactRoutes(db: Database, c: Config, storage: Storage) {
   const r = Router();
+  const prepared = (a: any) =>
+    a.kind === 'dataset' &&
+    a.status === 'verified' &&
+    a.extensions?.cache_format === 'grt.prepared/1';
+  r.get('/datasets', async (_req, res) =>
+    res.json({ data: (await db.list('artifacts')).filter(prepared) }),
+  );
+  r.get('/datasets/:sha256', async (req, res) => {
+    const sha = z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .parse(req.params.sha256);
+    const found = (await db.list('artifacts')).find(
+      (a) => prepared(a) && a.extensions.manifest_sha256 === sha,
+    );
+    assert(found, 404, 'not_found', 'Prepared dataset is not cached');
+    res.json(found);
+  });
   const uploadInput = z
     .object({
       name: name.refine((v) => !/[\\/\r\n]/.test(v), 'Use a filename, not a path'),
@@ -42,6 +60,33 @@ export function artifactRoutes(db: Database, c: Config, storage: Storage) {
       req,
       res,
       async (tx) => {
+        if (input.kind === 'dataset' && input.extensions.cache_format === 'grt.prepared/1') {
+          z.string()
+            .regex(/^[a-f0-9]{64}$/)
+            .parse(input.extensions.manifest_sha256);
+          assert(
+            !input.job_id && !input.attempt_id,
+            422,
+            'dataset_link',
+            'Datasets are shared inputs',
+          );
+          const previous = (await tx.list('artifacts')).find(
+            (a) =>
+              a.kind === 'dataset' &&
+              ['reserved', 'verifying', 'verified'].includes(a.status) &&
+              a.extensions.cache_format === 'grt.prepared/1' &&
+              a.extensions.manifest_sha256 === input.extensions.manifest_sha256,
+          );
+          if (previous) {
+            assert(
+              previous.sha256 === input.sha256 && previous.size_bytes === input.size_bytes,
+              409,
+              'cache_conflict',
+              'The same manifest must preserve the same prepared archive bytes',
+            );
+            return { body: previous };
+          }
+        }
         if (input.kind !== 'dataset') {
           assert(
             input.job_id && input.attempt_id,

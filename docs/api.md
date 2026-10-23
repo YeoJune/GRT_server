@@ -205,6 +205,10 @@ Provenance JSON:
 
 실제 Config는 원본 JSON 파일로 보존합니다. generic/1은 Config의 각 resolved spec 필드가 불변 spec과 같은지도 검사합니다. 환경 metadata는 추가 필드 또는 provenance에 기록할 수 있습니다. Manifest와 report의 완료 step은 불변 spec.target_steps를 충족하고, spec/config hash·runner·report schema와 필요한 posthoc를 모두 통과해야 합니다. 과학적 학습 검증이나 자동 checkpoint 복원은 별도 GRT adapter의 책임입니다.
 
+## Prepared 공유 캐시
+
+`GET /datasets`는 검증된 `grt.prepared/1` dataset 목록, `GET /datasets/{manifest_sha256}`는 정확한 manifest hash의 캐시를 반환합니다. 읽기 전용 토큰도 조회·다운로드할 수 있습니다. 기존 artifact 업로드 API에 kind=dataset, format=zip, extensions={cache_format:"grt.prepared/1",manifest_sha256:"<64 hex>"}를 사용합니다. 같은 manifest의 예약·검증 중·완료 항목은 같은 archive hash/size일 때 재사용합니다. 충돌은 409이며 실패한 업로드는 새로 예약할 수 있습니다. 전송·SHA256 검증은 기존 파일 API와 같고 archive 내용·manifest 파일별 검사는 GRT client가 수행합니다.
+
 ## 조회 / 결과 ZIP
 
 - `GET /artifacts/{id}/download`: verified object version의 짧은 다운로드 URL, sha256, size_bytes. Read-only 허용.

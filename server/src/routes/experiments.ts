@@ -43,6 +43,7 @@ export function experimentRoutes(db: Database, c: Config) {
         grt_scientific_validation: false,
         training_resume: false,
         experiment_deletion: true,
+        prepared_cache: true,
       },
     }),
   );
