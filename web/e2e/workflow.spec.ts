@@ -66,6 +66,38 @@ test('owner registers a schema and a queued experiment; read-only session cannot
     'https://wandb.ai/grt/research/runs/browser',
   );
   await expect(page.getByRole('button', { name: '관리 실험', exact: true })).toBeVisible();
+  for (const width of [320, 390]) {
+    await page.setViewportSize({ width, height: 844 });
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+    ).toBe(true);
+    const editButton = page.getByRole('button', { name: '수정', exact: true });
+    expect((await editButton.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+    await editButton.click();
+    const mobileDialog = page.getByRole('dialog', { name: '실험 수정' });
+    await expect(mobileDialog).toBeVisible();
+    const box = (await mobileDialog.boundingBox())!;
+    expect(box.x).toBeGreaterThanOrEqual(0);
+    expect(box.x + box.width).toBeLessThanOrEqual(width);
+    expect(
+      await mobileDialog
+        .getByLabel('실험 이름', { exact: true })
+        .evaluate((e) => getComputedStyle(e).fontSize),
+    ).toBe('16px');
+    await page.keyboard.press('Escape');
+    await expect(mobileDialog).not.toBeVisible();
+    await page.getByRole('button', { name: '큐·실행기', exact: true }).click();
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+    ).toBe(true);
+    await page.getByRole('button', { name: '설정', exact: true }).click();
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+    ).toBe(true);
+    await page.getByRole('button', { name: '실험', exact: true }).click();
+  }
+  await page.screenshot({ path: '/tmp/grt-mobile.png', fullPage: true });
+  await page.setViewportSize({ width: 1280, height: 900 });
   await page.screenshot({ path: '/tmp/grt-experiments.png', fullPage: true });
   await page.getByRole('button', { name: '설정', exact: true }).click();
   await page.getByRole('textbox', { name: '토큰 이름', exact: true }).fill('browser-reader');

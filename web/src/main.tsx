@@ -172,6 +172,46 @@ function App() {
   const [offers, setOffers] = useState<any>();
   const [columns, setColumns] = useState<string[]>(['/best_loss', '/final_loss']);
   const [newColumn, setNewColumn] = useState('');
+  const dialogOpen = !!(editing || detail || oneTime);
+  useEffect(() => {
+    if (!dialogOpen) return;
+    const previous = document.activeElement as HTMLElement | null;
+    const dialog = document.querySelector<HTMLElement>('[role="dialog"]');
+    const overflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const controls = () =>
+      Array.from(
+        dialog?.querySelectorAll<HTMLElement>(
+          'button:not(:disabled), input, select, textarea, a[href]',
+        ) || [],
+      );
+    controls()[0]?.focus({ preventScroll: true });
+    const keydown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !busy) {
+        setEditing(undefined);
+        setDetail(undefined);
+        setOneTime(undefined);
+      }
+      if (event.key === 'Tab') {
+        const items = controls();
+        const first = items[0],
+          last = items.at(-1);
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last?.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first?.focus();
+        }
+      }
+    };
+    document.addEventListener('keydown', keydown);
+    return () => {
+      document.body.style.overflow = overflow;
+      document.removeEventListener('keydown', keydown);
+      previous?.focus({ preventScroll: true });
+    };
+  }, [dialogOpen, busy]);
   const canWrite = me?.kind === 'write';
   useEffect(() => {
     api('/me')
@@ -551,7 +591,7 @@ function App() {
                 </span>
               </div>
             )}
-            <section className="table-wrap">
+            <section className="table-wrap experiment-list">
               <table>
                 <thead>
                   <tr>
@@ -566,7 +606,7 @@ function App() {
                 <tbody>
                   {visibleJobs.map((j) => (
                     <tr key={j.id}>
-                      <td>
+                      <td className="job-select">
                         <input
                           aria-label={`${j.name} 선택`}
                           type="checkbox"
@@ -580,7 +620,7 @@ function App() {
                           }
                         />
                       </td>
-                      <td>
+                      <td className="job-name">
                         <button
                           className="link"
                           onClick={() => api(`/jobs/${j.id}`).then(setDetail).catch(setError)}
@@ -590,24 +630,24 @@ function App() {
                         <small>{j.labels.campaign || '—'}</small>
                         <WandbLink job={j} />
                       </td>
-                      <td>
+                      <td data-label="큐">
                         {j.queue}
                         <small>우선순위 {j.priority}</small>
                       </td>
-                      <td>
+                      <td data-label="상태">
                         <Badge value={j.status} />
                         {j.cancel_requested && j.status === 'running' && <small>취소 대기</small>}
                       </td>
                       {tab === '결과' ? (
                         columns.map((c) => (
-                          <td key={c}>
+                          <td key={c} data-label={c}>
                             <code>{pretty(pointer(j.summary, c))}</code>
                           </td>
                         ))
                       ) : (
-                        <td>{date(j.created_at)}</td>
+                        <td data-label="등록 시각">{date(j.created_at)}</td>
                       )}
-                      <td>
+                      <td className="job-actions">
                         <div className="actions">
                           <button
                             disabled={!canWrite || busy || j.status === 'deleting'}
