@@ -130,7 +130,7 @@ unset GRT_SERVER_TOKEN
 
 ## 실험 관리·영구 삭제
 
-웹 실험 화면에서 이름·Campaign을 수정하고, 대기 상태에서는 큐·우선순위도 바꿀 수 있습니다. 학습 spec은 불변이므로 새로운 연구 조건은 복제로 등록합니다. 취소·재시도·큐 pause/resume·worker drain도 제공합니다.
+웹 실험 화면에서 이름·Campaign·W&B 링크를 수정하고, 대기 상태에서는 큐·우선순위도 바꿀 수 있습니다. 학습 spec은 불변이므로 새로운 연구 조건은 복제로 등록합니다. 취소·재시도·큐 pause/resume·worker drain도 제공합니다.
 
 CLI 관리 예제 (`metadata.json`에는 `{"name":"새 이름","campaign":"baseline"}` 저장):
 

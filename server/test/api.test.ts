@@ -762,9 +762,15 @@ test('experiment metadata can change without changing its immutable spec; active
     name: 'renamed',
     campaign: 'new',
     priority: 5,
+    wandb_url: 'https://wandb.ai/grt/research/runs/example',
   });
   assert.equal(updated.status, 200);
   assert.equal(updated.body.name, 'renamed');
+  assert.equal(updated.body.summary.wandb_url, 'https://wandb.ai/grt/research/runs/example');
+  assert.equal(
+    (await call('patch', `/jobs/${job.id}`, { wandb_url: 'javascript:alert(1)' })).status,
+    422,
+  );
   assert.equal(updated.body.labels.campaign, 'new');
   assert.equal(updated.body.labels.preserved, 'yes');
   assert.deepEqual(updated.body.spec, job.spec);

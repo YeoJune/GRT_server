@@ -65,16 +65,18 @@ Cookie 세션은 기본 절대 8시간 / idle 30분입니다. Token session은 �
 
 [전체 제출 예제](../examples/experiment.json)를 참고하세요.
 
-| 경로                      | 의미                                                                                       |
-| ------------------------- | ------------------------------------------------------------------------------------------ |
-| `POST /jobs/validate`     | Job JSON 검증, resolved / compatible_workers / warnings 반환. Read-only 허용               |
-| `POST /jobs`              | Job 제출. `dispatch=attached`는 worker_id 필수, job+attempt를 원자 할당                    |
-| `POST /jobs/batch`        | `{jobs:[...]}`. Queued만 허용, 최대50개, 오류 시 전체 rollback                             |
-| `GET /jobs`               | `queue,status,campaign` 필터                                                               |
-| `GET /jobs/{id}`          | attempts / artifacts / summary 포함, lease hash 제외                                       |
-| `PATCH /jobs/{id}`        | `{name?,campaign?,queue?,priority?}`. campaign:null로 해제, queue/priority는 queued만 허용 |
-| `DELETE /jobs/{id}`       | write·멱등 키 필수. 정보·이력·파일·관련 ZIP 영구 삭제, 202 deleting / 없는 ID는 204        |
-| `POST /jobs/{id}/actions` | `{action:"cancel"\|"retry"\|"clone",termination_evidence?,overrides?}`                     |
+| 경로                      | 의미                                                                                                  |
+| ------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `POST /jobs/validate`     | Job JSON 검증, resolved / compatible_workers / warnings 반환. Read-only 허용                          |
+| `POST /jobs`              | Job 제출. `dispatch=attached`는 worker_id 필수, job+attempt를 원자 할당                               |
+| `POST /jobs/batch`        | `{jobs:[...]}`. Queued만 허용, 최대50개, 오류 시 전체 rollback                                        |
+| `GET /jobs`               | `queue,status,campaign` 필터                                                                          |
+| `GET /jobs/{id}`          | attempts / artifacts / summary 포함, lease hash 제외                                                  |
+| `PATCH /jobs/{id}`        | `{name?,campaign?,wandb_url?,queue?,priority?}`. campaign:null로 해제, queue/priority는 queued만 허용 |
+| `DELETE /jobs/{id}`       | write·멱등 키 필수. 정보·이력·파일·관련 ZIP 영구 삭제, 202 deleting / 없는 ID는 204                   |
+| `POST /jobs/{id}/actions` | `{action:"cancel"\|"retry"\|"clone",termination_evidence?,overrides?}`                                |
+
+W&B 링크는 `summary.wandb_url`에 저장하며 HTTPS `wandb.ai` URL을 사용합니다. 실험 수정으로 기존 실행의 링크도 등록·해제할 수 있습니다. GRT는 online run 링크를 heartbeat와 완료 시 자동 전송합니다.
 
 Queued 취소는 즉시 cancelled, running 취소는 cancel_requested만 기록합니다. Stale running retry는 lease 만료와 10자 이상 종료 근거가 필요합니다. 근거는 사람이 이전 process/runtime 종료를 확인한 기록입니다. 서버가 단순 timeout을 종료 증거로 간주하지 않습니다. Failed/interrupted/cancelled는 이미 finish되었으므로 별도 근거 없이 retry할 수 있습니다. Clone은 새로운 job을 만들며 overrides는 다시 schema 검증합니다.
 

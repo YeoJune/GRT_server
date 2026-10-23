@@ -237,6 +237,17 @@ export function experimentRoutes(db: Database, c: Config) {
       .object({
         name: name.optional(),
         campaign: name.nullable().optional(),
+        wandb_url: z
+          .string()
+          .url()
+          .refine((v) => {
+            const u = new URL(v);
+            return (
+              u.protocol === 'https:' && u.hostname === 'wandb.ai' && !u.username && !u.password
+            );
+          }, 'Use an HTTPS wandb.ai run URL')
+          .nullable()
+          .optional(),
         queue: name.optional(),
         priority: z.number().int().min(-10000).max(10000).optional(),
       })
@@ -260,12 +271,19 @@ export function experimentRoutes(db: Database, c: Config) {
           'queue_not_found',
           'Queue not found',
         );
-      const { campaign, ...metadata } = input;
+      const { campaign, wandb_url, ...metadata } = input;
       const labels = { ...job.labels };
       if (campaign === null) delete labels.campaign;
       else if (campaign !== undefined) labels.campaign = campaign;
       await audit(tx, req, 'job.update', { job_id: job.id, fields: Object.keys(input) });
-      return { body: await tx.put('jobs', { ...job, ...metadata, labels }) };
+      return {
+        body: await tx.put('jobs', {
+          ...job,
+          ...metadata,
+          labels,
+          summary: { ...job.summary, ...(wandb_url !== undefined ? { wandb_url } : {}) },
+        }),
+      };
     });
   });
   r.delete('/jobs/:id', writeOnly, async (req, res) => {
@@ -567,7 +585,7 @@ export function experimentRoutes(db: Database, c: Config) {
         last_heartbeat_at: now(),
         lease_expires_at,
       });
-      await tx.put('jobs', { ...job, summary: input.summary ?? job.summary });
+      await tx.put('jobs', { ...job, summary: { ...job.summary, ...input.summary } });
       const w = await tx.get('workers', worker_id);
       if (w) await tx.put('workers', { ...w, last_seen_at: now() });
       return {

@@ -47,6 +47,9 @@ test('owner registers a schema and a queued experiment; read-only session cannot
   await edit.getByLabel('실험 이름', { exact: true }).fill('관리 실험');
   await edit.getByLabel('Campaign', { exact: true }).fill('browser-campaign');
   await edit.getByLabel('우선순위', { exact: true }).fill('7');
+  await edit
+    .getByLabel('W&B 링크', { exact: true })
+    .fill('https://wandb.ai/grt/research/runs/browser');
   const [update] = await Promise.all([
     page.waitForResponse((r) => r.url().includes('/v1/jobs/') && r.request().method() === 'PATCH'),
     edit.getByRole('button', { name: '저장', exact: true }).click(),
@@ -58,6 +61,10 @@ test('owner registers a schema and a queued experiment; read-only session cannot
     priority: 7,
   });
   await expect(edit).not.toBeVisible();
+  await expect(page.getByRole('link', { name: 'W&B 열기 ↗', exact: true })).toHaveAttribute(
+    'href',
+    'https://wandb.ai/grt/research/runs/browser',
+  );
   await expect(page.getByRole('button', { name: '관리 실험', exact: true })).toBeVisible();
   await page.screenshot({ path: '/tmp/grt-experiments.png', fullPage: true });
   await page.getByRole('button', { name: '설정', exact: true }).click();

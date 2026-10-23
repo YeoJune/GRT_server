@@ -52,6 +52,20 @@ function Badge({ value }: { value: string }) {
 function Json({ value }: { value: unknown }) {
   return <pre className="json">{pretty(value)}</pre>;
 }
+function WandbLink({ job }: { job: any }) {
+  try {
+    const url = new URL(job.summary?.wandb_url);
+    if (url.protocol !== 'https:' || url.hostname !== 'wandb.ai' || url.username || url.password)
+      return null;
+    return (
+      <a className="wandb-link" href={url.href} target="_blank" rel="noopener noreferrer">
+        W&B 열기 ↗
+      </a>
+    );
+  } catch {
+    return null;
+  }
+}
 function Empty({ children }: { children: React.ReactNode }) {
   return <p className="empty">{children}</p>;
 }
@@ -269,6 +283,7 @@ function App() {
       id: job.id,
       name: job.name,
       campaign: job.labels.campaign || '',
+      wandb_url: job.summary?.wandb_url || '',
       queue: job.queue,
       priority: job.priority,
       queued: job.status === 'queued',
@@ -280,6 +295,7 @@ function App() {
       const updated = await api(`/jobs/${editing.id}`, 'PATCH', {
         name: editing.name,
         campaign: editing.campaign.trim() || null,
+        wandb_url: editing.wandb_url.trim() || null,
         ...(editing.queued ? { queue: editing.queue, priority: Number(editing.priority) } : {}),
       });
       if (detail?.id === updated.id) setDetail(await api(`/jobs/${updated.id}`));
@@ -572,6 +588,7 @@ function App() {
                           {j.name}
                         </button>
                         <small>{j.labels.campaign || '—'}</small>
+                        <WandbLink job={j} />
                       </td>
                       <td>
                         {j.queue}
@@ -1094,6 +1111,15 @@ function App() {
                   onChange={(e) => setEditing({ ...editing, campaign: e.target.value })}
                 />
               </label>
+              <label>
+                W&B 링크
+                <input
+                  type="url"
+                  value={editing.wandb_url}
+                  placeholder="https://wandb.ai/…/runs/…"
+                  onChange={(e) => setEditing({ ...editing, wandb_url: e.target.value })}
+                />
+              </label>
               {editing.queued && (
                 <>
                   <label>
@@ -1147,6 +1173,7 @@ function App() {
               />
             )}
             <h3>불변 설정</h3>
+            <WandbLink job={detail} />
             <Json value={detail.spec} />
             <h3>실행 이력</h3>
             {detail.attempts?.map((a: any) => (
