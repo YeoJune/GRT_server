@@ -2,7 +2,7 @@
 
 기준 URL은 `/v1`이며 인증은 `Authorization: Bearer <GRT_SERVER_TOKEN>` 또는 브라우저 session cookie입니다. UTC ISO8601, 초·byte, 소문자 hex SHA256을 사용합니다.
 
-생성·claim·finish·complete·batch·export에는 8~128자 `Idempotency-Key`를 보냅니다. 같은 키와 본문이면 기존 결과를 반환하고, 같은 키의 다른 본문은 409입니다. 키는 token ID와 분리된 소유자 namespace에 있으므로 토큰 교체에도 중복 실행을 만들지 않습니다. 빈 claim 뒤에는 새 키로 poll하세요.
+생성·실험 삭제·claim·finish·complete·batch·export에는 8~128자 `Idempotency-Key`를 보냅니다. 같은 키와 본문이면 기존 결과를 반환하고, 같은 키의 다른 본문은 409입니다. 키는 token ID와 분리된 소유자 namespace에 있으므로 토큰 교체에도 중복 실행을 만들지 않습니다. 빈 claim 뒤에는 새 키로 poll하세요.
 
 `GET /requests/{client_request_id}`는 비밀값을 제외한 접수 결과를 조회합니다. 토큰/lease/서명 URL은 재생하지 않습니다. 토큰 발급 응답 유실은 해당 ID를 폐기·재발급하고, 업로드 URL은 upload ID로 갱신합니다. Claim 응답을 잃고 원래 lease도 보유하지 않았다면 종료 확인 뒤 retry합니다.
 
@@ -17,6 +17,8 @@
   "field_errors": []
 }
 ```
+
+삭제된 실험을 포함한 과거 요청 응답은 정보 재노출·재생성을 막기 위해 제거하고, 같은 키의 재요청은 410 `resource_deleted`를 반환합니다.
 
 상태는 401 인증, 403 권한·CSRF, 409 정합성 충돌, 413 크기, 422 검증, 429 호출 제한입니다. GET 목록은 `?limit=50&cursor=...`를 받으며 `{data,next_cursor}`를 반환합니다. 추가 core 요청 필드는 422입니다. 자유 필드는 JSON Schema가 허용한 spec과 extensions/metrics/summary에 둡니다.
 
@@ -63,17 +65,20 @@ Cookie 세션은 기본 절대 8시간 / idle 30분입니다. Token session은 �
 
 [전체 제출 예제](../examples/experiment.json)를 참고하세요.
 
-| 경로                      | 의미                                                                         |
-| ------------------------- | ---------------------------------------------------------------------------- |
-| `POST /jobs/validate`     | Job JSON 검증, resolved / compatible_workers / warnings 반환. Read-only 허용 |
-| `POST /jobs`              | Job 제출. `dispatch=attached`는 worker_id 필수, job+attempt를 원자 할당      |
-| `POST /jobs/batch`        | `{jobs:[...]}`. Queued만 허용, 최대50개, 오류 시 전체 rollback               |
-| `GET /jobs`               | `queue,status,campaign` 필터                                                 |
-| `GET /jobs/{id}`          | attempts / artifacts / summary 포함, lease hash 제외                         |
-| `PATCH /jobs/{id}`        | Queued 상태의 `{queue?,priority?}`만 허용                                    |
-| `POST /jobs/{id}/actions` | `{action:"cancel"\|"retry"\|"clone",termination_evidence?,overrides?}`       |
+| 경로                      | 의미                                                                                       |
+| ------------------------- | ------------------------------------------------------------------------------------------ |
+| `POST /jobs/validate`     | Job JSON 검증, resolved / compatible_workers / warnings 반환. Read-only 허용               |
+| `POST /jobs`              | Job 제출. `dispatch=attached`는 worker_id 필수, job+attempt를 원자 할당                    |
+| `POST /jobs/batch`        | `{jobs:[...]}`. Queued만 허용, 최대50개, 오류 시 전체 rollback                             |
+| `GET /jobs`               | `queue,status,campaign` 필터                                                               |
+| `GET /jobs/{id}`          | attempts / artifacts / summary 포함, lease hash 제외                                       |
+| `PATCH /jobs/{id}`        | `{name?,campaign?,queue?,priority?}`. campaign:null로 해제, queue/priority는 queued만 허용 |
+| `DELETE /jobs/{id}`       | write·멱등 키 필수. 정보·이력·파일·관련 ZIP 영구 삭제, 202 deleting / 없는 ID는 204        |
+| `POST /jobs/{id}/actions` | `{action:"cancel"\|"retry"\|"clone",termination_evidence?,overrides?}`                     |
 
 Queued 취소는 즉시 cancelled, running 취소는 cancel_requested만 기록합니다. Stale running retry는 lease 만료와 10자 이상 종료 근거가 필요합니다. 근거는 사람이 이전 process/runtime 종료를 확인한 기록입니다. 서버가 단순 timeout을 종료 증거로 간주하지 않습니다. Failed/interrupted/cancelled는 이미 finish되었으므로 별도 근거 없이 retry할 수 있습니다. Clone은 새로운 job을 만들며 overrides는 다시 schema 검증합니다.
+
+삭제는 running/finalizing이면 409 `job_active`, 관련 ZIP이 preparing이면 409 `export_busy`입니다. 취소·종료 또는 ZIP 완료 후 새 키로 요청하세요. 접수 즉시 API 파일 접근과 수정·재실행을 차단하고, 비동기 정리 후 GET은 404가 됩니다. `deletion_error`가 있으면 자동 재시도하며 새 DELETE 키로 즉시 재시도를 요청할 수 있습니다. S3는 기존 서명 URL 유효기간만큼 대기합니다. 감사 로그와 중복 방지용 최소 기록, 공유 dataset은 유지합니다. 다중 실험 ZIP은 통째로 삭제하며 다른 실험 원본은 유지합니다.
 
 Policy는 `max_attempt_seconds,eta_seconds,checkpointable,preflight_seconds,required_artifact_kinds,require_posthoc`를 받습니다. 기본 필수 파일은 report/config/provenance이고 이 세 증거는 generic adapter에서 항상 필수입니다. ETA 미측정은 checkpointable=true인 작업에만 claim을 허용합니다. 서버가 checkpoint 기능을 worker에 대신 구현하지 않습니다.
 
@@ -213,6 +218,8 @@ ZIP 요청 접수는 생성 성공을 뜻하지 않습니다. `ready`까지 조�
 
 ## CLI
 
+환경별 준비·관리 예제는 [사용 가이드](environments.md)를 따릅니다. `metadata.json`에는 변경할 name/campaign 또는 대기 작업의 queue/priority만 넣습니다.
+
 토큰은 환경 secret으로 주입하고 명령행 인자로 전달하지 않습니다. `.env`에 GRT_SERVER_URL / GRT_SERVER_TOKEN을 적어도 되지만 Git에 올리지 마세요.
 
 ```bash
@@ -222,6 +229,8 @@ npm run cli -- schemas register examples/schema.json
 npm run cli -- jobs validate examples/experiment.json
 npm run cli -- jobs submit examples/experiment.json
 npm run cli -- jobs list --queue research --json
+npm run cli -- jobs update job_123 --file metadata.json
+npm run cli -- jobs delete job_123 --yes
 npm run cli -- jobs clone job_123
 npm run cli -- jobs retry job_123 --evidence "이전 runtime 종료를 확인했습니다"
 npm run cli -- queues pause research

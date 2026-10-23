@@ -42,6 +42,7 @@ export function experimentRoutes(db: Database, c: Config) {
         automatic_retention: false,
         grt_scientific_validation: false,
         training_resume: false,
+        experiment_deletion: true,
       },
     }),
   );
@@ -103,6 +104,7 @@ export function experimentRoutes(db: Database, c: Config) {
             'failed',
             'interrupted',
             'cancelled',
+            'deleting',
           ].map((s) => [s, jobs.filter((j) => j.queue === q.name && j.status === s).length]),
         ),
       })),
@@ -233,6 +235,8 @@ export function experimentRoutes(db: Database, c: Config) {
   r.patch('/jobs/:id', writeOnly, async (req, res) => {
     const input = z
       .object({
+        name: name.optional(),
+        campaign: name.nullable().optional(),
         queue: name.optional(),
         priority: z.number().int().min(-10000).max(10000).optional(),
       })
@@ -242,8 +246,9 @@ export function experimentRoutes(db: Database, c: Config) {
     await mutation(db, req, res, async (tx) => {
       const job = await tx.get('jobs', String(req.params.id));
       assert(job, 404, 'not_found', 'Job not found');
+      assert(job.status !== 'deleting', 409, 'job_deleting', 'Experiment deletion is in progress');
       assert(
-        job.status === 'queued',
+        (input.queue === undefined && input.priority === undefined) || job.status === 'queued',
         409,
         'job_not_queued',
         'Only queued jobs may move or change priority',
@@ -255,8 +260,63 @@ export function experimentRoutes(db: Database, c: Config) {
           'queue_not_found',
           'Queue not found',
         );
-      return { body: await tx.put('jobs', { ...job, ...input }) };
+      const { campaign, ...metadata } = input;
+      const labels = { ...job.labels };
+      if (campaign === null) delete labels.campaign;
+      else if (campaign !== undefined) labels.campaign = campaign;
+      await audit(tx, req, 'job.update', { job_id: job.id, fields: Object.keys(input) });
+      return { body: await tx.put('jobs', { ...job, ...metadata, labels }) };
     });
+  });
+  r.delete('/jobs/:id', writeOnly, async (req, res) => {
+    z.object({})
+      .strict()
+      .parse(req.body ?? {});
+    await mutation(
+      db,
+      req,
+      res,
+      async (tx) => {
+        const job = await tx.get('jobs', String(req.params.id));
+        if (!job) return { status: 204 };
+        assert(
+          !['running', 'finalizing'].includes(job.status),
+          409,
+          'job_active',
+          'Cancel and finish the experiment before deleting it',
+        );
+        const artifacts = (await tx.list('artifacts')).filter((a) => a.job_id === job.id);
+        const artifactIds = new Set(artifacts.map((a) => a.id));
+        const exports = (await tx.list('exports')).filter((e) =>
+          e.artifacts.some((a: any) => artifactIds.has(a.id)),
+        );
+        assert(
+          !exports.some((e) => e.status === 'preparing'),
+          409,
+          'export_busy',
+          'Wait for the selected experiment ZIP to finish before deleting it',
+        );
+        for (const a of artifacts) await tx.put('artifacts', { ...a, status: 'deleting' });
+        for (const e of exports) await tx.put('exports', { ...e, status: 'deleting' });
+        await tx.put('jobs', {
+          ...job,
+          status: 'deleting',
+          delete_after:
+            job.delete_after ??
+            new Date(
+              Date.now() + (c.STORAGE_DRIVER === 's3' ? c.SIGNED_URL_SECONDS * 1000 : 0),
+            ).toISOString(),
+          deletion_error: null,
+          delete_retry_at: null,
+        });
+        await audit(tx, req, 'job.delete', { job_id: job.id });
+        return {
+          status: 202,
+          body: { job_id: job.id, deletion_requested: true, status: 'deleting' },
+        };
+      },
+      { required: true },
+    );
   });
   r.post('/jobs/:id/actions', writeOnly, async (req, res) => {
     const input = z
@@ -274,6 +334,12 @@ export function experimentRoutes(db: Database, c: Config) {
       async (tx) => {
         const job = await tx.get('jobs', String(req.params.id));
         assert(job, 404, 'not_found', 'Job not found');
+        assert(
+          job.status !== 'deleting',
+          409,
+          'job_deleting',
+          'Experiment deletion is in progress',
+        );
         if (input.action === 'clone') {
           const body = Object.fromEntries(
             Object.keys(jobInput.shape)

@@ -47,7 +47,7 @@ function date(v: string | null) {
     : '—';
 }
 function Badge({ value }: { value: string }) {
-  return <span className={`badge ${value}`}>{value}</span>;
+  return <span className={`badge ${value}`}>{value === 'deleting' ? '삭제 중' : value}</span>;
 }
 function Json({ value }: { value: unknown }) {
   return <pre className="json">{pretty(value)}</pre>;
@@ -147,6 +147,7 @@ function App() {
   const [composer, setComposer] = useState(false);
   const [validated, setValidated] = useState<any>();
   const [detail, setDetail] = useState<any>();
+  const [editing, setEditing] = useState<any>();
   const [selected, setSelected] = useState<string[]>([]);
   const [filter, setFilter] = useState('');
   const [campaign, setCampaign] = useState('');
@@ -180,6 +181,7 @@ function App() {
         api('/capabilities'),
       ]);
       setJobs(j);
+      setSelected((ids) => ids.filter((id) => j.some((job) => job.id === id)));
       setQueues(q);
       setWorkers(w);
       setSchemas(s);
@@ -201,7 +203,13 @@ function App() {
   useEffect(() => {
     if (!detail || !me) return;
     const timer = setInterval(
-      () => api(`/jobs/${detail.id}`).then(setDetail).catch(setError),
+      () =>
+        api(`/jobs/${detail.id}`)
+          .then(setDetail)
+          .catch((e) => {
+            if (e instanceof ApiError && e.status === 404) setDetail(undefined);
+            else setError(e);
+          }),
       7000,
     );
     return () => clearInterval(timer);
@@ -254,6 +262,47 @@ function App() {
       }),
     );
     if (detail) setDetail(await api(`/jobs/${job.id}`));
+  }
+  function editJob(job: any) {
+    setError(null);
+    setEditing({
+      id: job.id,
+      name: job.name,
+      campaign: job.labels.campaign || '',
+      queue: job.queue,
+      priority: job.priority,
+      queued: job.status === 'queued',
+    });
+  }
+  async function saveJob(e: React.FormEvent) {
+    e.preventDefault();
+    await act(async () => {
+      const updated = await api(`/jobs/${editing.id}`, 'PATCH', {
+        name: editing.name,
+        campaign: editing.campaign.trim() || null,
+        ...(editing.queued ? { queue: editing.queue, priority: Number(editing.priority) } : {}),
+      });
+      if (detail?.id === updated.id) setDetail(await api(`/jobs/${updated.id}`));
+      setEditing(undefined);
+    });
+  }
+  async function deleteJobs(ids: string[]) {
+    if (
+      !confirm(
+        `선택한 실험 ${ids.length}개의 정보·실행 이력·결과 파일과 관련 ZIP을 영구 삭제합니다. 복구할 수 없습니다. 계속할까요?`,
+      )
+    )
+      return;
+    await act(async () => {
+      for (const id of ids) {
+        await api(`/jobs/${id}`, 'DELETE');
+        setSelected((selected) => selected.filter((value) => value !== id));
+        if (detail?.id === id) setDetail(undefined);
+      }
+      setExportId(undefined);
+      setExportState(undefined);
+    });
+    await refresh();
   }
   async function validate() {
     await act(async () => {
@@ -383,6 +432,21 @@ function App() {
               )}
               <button disabled={!selected.length || busy} onClick={exportSelected}>
                 선택 결과 ZIP ({selected.length})
+              </button>
+              <button
+                disabled={
+                  !canWrite ||
+                  busy ||
+                  !selected.length ||
+                  jobs.some(
+                    (j) =>
+                      selected.includes(j.id) &&
+                      ['running', 'finalizing', 'deleting'].includes(j.status),
+                  )
+                }
+                onClick={() => deleteJobs(selected)}
+              >
+                선택 영구 삭제 ({selected.length})
               </button>
             </div>
             {composer && tab === '실험' && (
@@ -529,7 +593,7 @@ function App() {
                       <td>
                         <div className="actions">
                           <button
-                            disabled={!canWrite || busy}
+                            disabled={!canWrite || busy || j.status === 'deleting'}
                             onClick={() => {
                               const body = Object.fromEntries(
                                 Object.keys(sampleJob).map((k) => [k, j[k]]),
@@ -541,6 +605,27 @@ function App() {
                             }}
                           >
                             복제
+                          </button>
+                          <button
+                            disabled={!canWrite || busy || j.status === 'deleting'}
+                            onClick={() => editJob(j)}
+                          >
+                            수정
+                          </button>
+                          <button
+                            disabled={
+                              !canWrite ||
+                              busy ||
+                              ['running', 'finalizing'].includes(j.status) ||
+                              (j.status === 'deleting' && !j.deletion_error)
+                            }
+                            onClick={() => deleteJobs([j.id])}
+                          >
+                            {j.deletion_error
+                              ? '삭제 재시도'
+                              : j.status === 'deleting'
+                                ? '삭제 중'
+                                : '영구 삭제'}
                           </button>
                           {['queued', 'running'].includes(j.status) && (
                             <button
@@ -986,6 +1071,66 @@ function App() {
         )}
         <footer>GRT 연구 제어 · API v1 · 표시 시간 Asia/Seoul</footer>
       </main>
+      {editing && (
+        <div className="overlay">
+          <section role="dialog" aria-modal="true" aria-label="실험 수정" className="dialog">
+            <h2>실험 수정</h2>
+            <ErrorBox error={error} />
+            <form onSubmit={saveJob}>
+              <label>
+                실험 이름
+                <input
+                  value={editing.name}
+                  required
+                  maxLength={150}
+                  onChange={(e) => setEditing({ ...editing, name: e.target.value })}
+                />
+              </label>
+              <label>
+                Campaign
+                <input
+                  value={editing.campaign}
+                  maxLength={150}
+                  onChange={(e) => setEditing({ ...editing, campaign: e.target.value })}
+                />
+              </label>
+              {editing.queued && (
+                <>
+                  <label>
+                    대기열
+                    <select
+                      value={editing.queue}
+                      onChange={(e) => setEditing({ ...editing, queue: e.target.value })}
+                    >
+                      {queues.map((q) => (
+                        <option key={q.id} value={q.name}>
+                          {q.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    우선순위
+                    <input
+                      type="number"
+                      min={-10000}
+                      max={10000}
+                      required
+                      value={editing.priority}
+                      onChange={(e) => setEditing({ ...editing, priority: e.target.value })}
+                    />
+                  </label>
+                </>
+              )}
+              <p className="muted">학습 조건은 변경하지 않습니다. 새 조건은 복제로 등록하세요.</p>
+              <button disabled={busy}>저장</button>{' '}
+              <button type="button" onClick={() => setEditing(undefined)}>
+                닫기
+              </button>
+            </form>
+          </section>
+        </div>
+      )}
       {detail && (
         <div className="overlay">
           <section role="dialog" aria-modal="true" aria-label="실험 상세" className="dialog">
@@ -996,6 +1141,11 @@ function App() {
               <button onClick={() => setDetail(undefined)}>닫기</button>
             </div>
             {detail.validation_error && <Json value={detail.validation_error} />}
+            {detail.deletion_error && (
+              <ErrorBox
+                error={`파일 삭제 실패: ${detail.deletion_error.message} · 자동 재시도 중`}
+              />
+            )}
             <h3>불변 설정</h3>
             <Json value={detail.spec} />
             <h3>실행 이력</h3>

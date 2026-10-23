@@ -153,8 +153,10 @@ export function artifactRoutes(db: Database, c: Config, storage: Storage) {
           'unverified_artifact',
           'Every selected artifact must be verified',
         );
-        for (const jid of input.job_ids)
-          assert(await tx.get('jobs', jid), 422, 'job_not_found', 'Selected job not found');
+        for (const jid of input.job_ids) {
+          const job = await tx.get('jobs', jid);
+          assert(job && job.status !== 'deleting', 422, 'job_not_found', 'Selected job not found');
+        }
         assert(
           artifacts.length > 0 && artifacts.length <= 1000,
           422,
@@ -254,7 +256,12 @@ export function transferRoutes(db: Database, storage: Storage) {
           'size_mismatch',
           'Content-Length differs from declared size',
         );
-      await storage.receive(a.id, req, a.size_bytes);
+      await storage.receive(
+        a.id,
+        req,
+        a.size_bytes,
+        async () => (await db.get('artifacts', a.id))?.status === 'reserved',
+      );
       res.status(204).end();
     } else {
       assert(req.method === 'GET', 405, 'method_not_allowed', 'Use GET');

@@ -5,7 +5,7 @@ web (React) ── /v1 ── Express
 CLI / worker ───────────┤
                        ├─ routes: 인증·검증·권한·HTTP
                        ├─ services/experiments: claim·lease·호환 조건
-                       ├─ services/background: 검증·완료·ZIP
+                       ├─ services/background: 검증·완료·ZIP·삭제
                        ├─ db: Knex / SQLite 또는 PostgreSQL
                        └─ services/storage: local 또는 S3
 ```
@@ -28,7 +28,7 @@ DB 변경은 Knex migration으로 관리합니다. SQLite는 WAL + 단일 연결
 
 토큰의 원문, lease 원문, 서명 URL은 멱등 응답 기록에서 제외합니다. 토큰 발급 응답 유실은 기록의 token ID를 폐기하고 새로 발급하세요. Claim / attached 응답 재생에는 `lease_recovery_required=true`가 붙습니다. 이미 가진 lease는 그대로 사용하고, lease를 잃었다면 기존 실행 종료 확인 후 retry해야 합니다. 원문 lease를 재조회해 새 프로세스에 복제하지 않습니다.
 
-감사 로그는 로그인 성공·실패, token·계정·schema·설정·queue 변경과 job 취소·복구 근거를 기록합니다. 운영 access log에는 Authorization, cookie, request body, 서명 URL query를 남기지 마세요.
+감사 로그는 로그인 성공·실패, token·계정·schema·설정·queue 변경과 job 수정·삭제·취소·복구 근거를 기록합니다. 운영 access log에는 Authorization, cookie, request body, 서명 URL query를 남기지 마세요.
 
 ## 상태 전이
 
@@ -48,6 +48,12 @@ Export는 요청 시 verified artifact ID/hash/version 집합을 고정합니다
 
 검증은 별도 broker 없이 DB 기반 polling으로 실행합니다. 파일 검증 중 일시적인 object 미존재·저장 장애는 최대 10분 재시도합니다. Finalizing에서 미검증 파일 대기는 최대 24시간입니다. 크기/hash/schema 불일치는 실패 사유를 보존합니다.
 
+## 명시적 실험 삭제
+
+종료된 실험 또는 queued 작업은 `deleting`으로 전환합니다. DB에 삭제 요청·S3 URL 대기 시각·오류·재시도 시각을 저장하고 백그라운드가 파일부터 지운 뒤 메타데이터를 transaction으로 제거합니다. 재시작·부분 삭제 후에도 재시도할 수 있으며 실제 파일 제거 실패를 성공으로 처리하지 않습니다. 로컬 수신 중인 업로드는 완료·폐기를 기다리고, 삭제 상태가 된 예약은 새 파일을 확정할 수 없습니다.
+
+실험의 attempt·artifact·관련 export와 과거 멱등 응답의 실험 데이터를 제거합니다. 멱등 키 tombstone과 감사 로그는 유지합니다. 다중 실험 ZIP은 전체 제거하고 공유 dataset과 다른 실험 원본은 유지합니다. S3는 기존 서명 URL 만료 뒤 모든 object version·delete marker를 제거합니다. 보관 정책에 따른 자동 삭제와는 별개의 사용자 관리 기능입니다.
+
 ## 실행기와 구현 범위
 
-GRT 공통 helper는 `generic/1`과 불변 schema로 upload/queue 연결을 제공하며 실제 연구 Config·원본 결과와 서버 검증용 envelope를 구분합니다. 임대 비용이 발생하는 Vast 조작, 독립 과금 감시, 서버 checkpoint 자동 복원, 자동 삭제와 GRT 과학적 완료 검증은 미지원이며 capabilities에 공개합니다. 실행기 사용법은 [GRT 서버 연결](https://github.com/YeoJune/GRT/blob/main/docs/server.md)을 따릅니다.
+GRT 공통 helper는 `generic/1`과 불변 schema로 upload/queue 연결을 제공하며 실제 연구 Config·원본 결과와 서버 검증용 envelope를 구분합니다. 임대 비용이 발생하는 Vast 조작, 독립 과금 감시, 서버 checkpoint 자동 복원, 보관 정책에 따른 자동 삭제와 GRT 과학적 완료 검증은 미지원이며 capabilities에 공개합니다. 실행기 사용법은 [GRT 서버 연결](https://github.com/YeoJune/GRT/blob/main/docs/server.md)을 따릅니다.

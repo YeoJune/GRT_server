@@ -33,7 +33,7 @@ npm run dev
 
 ## 실행기 연결
 
-GRT에서 `server_mode='upload'`를 선택하면 기존 notebook 실험의 상태·원본 결과·checkpoint를 자동 저장합니다. `queue`는 서버에 제출한 불변 spec을 실행하고, 기본 `off`는 서버 없이 실행합니다. 연결 방법은 [GRT 서버 연결](https://github.com/YeoJune/GRT/blob/main/docs/server.md)을 따릅니다.
+GRT에서 `server_mode='upload'`를 선택하면 기존 notebook 실험의 상태·원본 결과·checkpoint를 자동 저장합니다. `queue`는 서버에 제출한 불변 spec을 실행하고, 기본 `off`는 서버 없이 실행합니다. 환경별 실행·큐 제출·결과 회수·관리는 [사용 가이드](docs/environments.md), GRT 연결 계약은 [GRT 서버 연결](https://github.com/YeoJune/GRT/blob/main/docs/server.md)을 따릅니다.
 
 일반 실행기는 설정 화면에서 [예제 schema](examples/schema.json)를 등록하고 `research` 큐를 만든 뒤 [실험 JSON](examples/experiment.json)을 검증·제출할 수 있습니다. 작업을 가져올 실행기는 별도로 연결해야 합니다. HTTP 계약과 CLI 명령은 [API 가이드](docs/api.md)에 있습니다.
 
@@ -44,6 +44,7 @@ GRT에서 `server_mode='upload'`를 선택하면 기존 notebook 실험의 상�
 - 불변 schema·spec, 원자적 batch 등록, 재요청 중복 방지
 - 우선순위 큐·pause/resume·worker drain, 호환 조건·deadline 검사, 원자적 claim
 - attached 실행, heartbeat·lease·generation, 취소 전달과 종료 근거를 남기는 stale 복구
+- 실험 이름·Campaign 관리, 대기열·우선순위 수정, 종료된 실험·결과 파일 영구 삭제
 - 크기·SHA256 검증, 원본 보관, 개별 다운로드·비동기 ZIP·CLI 결과 수집
 - SQLite 또는 PostgreSQL, 로컬 파일 또는 S3 저장 어댑터
 
@@ -52,6 +53,17 @@ GRT에서 `server_mode='upload'`를 선택하면 기존 notebook 실험의 상�
 Vast는 키 설정 시 offer 검색만 제공합니다. 유료 임대·start/stop/destroy·enroll, 독립 과금 감시, 보관 정책에 따른 자동 삭제는 미지원입니다. DB·저장 어댑터 설정 변경은 기존 데이터를 자동 이전하지 않습니다.
 
 ## 운영과 검증
+
+EC2 서버 최신화:
+
+```bash
+cd /home/ec2-user/GRT_server && \
+git pull --ff-only origin main && \
+npm ci && \
+npm run build && \
+sudo systemctl restart grt && \
+curl --fail --show-error https://grt.grtserver.cloud/healthz
+```
 
 HTTPS·systemd·업데이트·백업/복원·선택 DB/S3 설정은 [운영 문서](docs/operations.md), 내부 구성은 [구현 구조](docs/architecture.md)에 정리했습니다.
 

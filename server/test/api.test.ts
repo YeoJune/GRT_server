@@ -1,6 +1,6 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import dotenv from 'dotenv';
 import { tmpdir } from 'node:os';
 import { execFile } from 'node:child_process';
@@ -723,10 +723,133 @@ test('CLI authenticates and incrementally streams verified results without expos
     assert.equal(JSON.parse(first.stdout).downloaded, 3);
     const second = await cli('results', 'collect', '--new', '--output', output);
     assert.equal(JSON.parse(second.stdout).downloaded, 0);
+    const managed = (await call('post', '/jobs', jobBody('cli-management'))).body;
+    const changes = path.join(directory, 'metadata.json');
+    await writeFile(changes, JSON.stringify({ name: 'CLI renamed', campaign: 'cli' }));
+    const writeCli = (...args: string[]) =>
+      promisify(execFile)(
+        process.execPath,
+        ['--import', 'tsx', path.resolve('../scripts/grt.ts'), ...args],
+        {
+          env: { ...process.env, GRT_SERVER_URL: base, GRT_SERVER_TOKEN: write },
+          cwd: process.cwd(),
+        },
+      );
+    const updated = await writeCli('jobs', 'update', managed.id, '--file', changes);
+    assert.equal(JSON.parse(updated.stdout).name, 'CLI renamed');
+    await assert.rejects(writeCli('jobs', 'delete', managed.id), /Use jobs delete ID --yes/);
+    assert.equal((await db.get('jobs', managed.id))!.status, 'queued');
+    const deletion = await writeCli('jobs', 'delete', managed.id, '--yes');
+    assert.equal(JSON.parse(deletion.stdout).deletion_requested, true);
+    await system.background.tick();
+    assert.equal(await db.get('jobs', managed.id), undefined);
   } finally {
     system.storage.config.APP_ORIGIN = previousOrigin;
     await new Promise<void>((resolve, reject) =>
       server.close((err) => (err ? reject(err) : resolve())),
     );
   }
+});
+
+test('experiment metadata can change without changing its immutable spec; active deletion is blocked', async () => {
+  const created = await call(
+    'post',
+    '/jobs',
+    jobBody('manage', { labels: { campaign: 'old', preserved: 'yes' } }),
+  );
+  const job = created.body;
+  const updated = await call('patch', `/jobs/${job.id}`, {
+    name: 'renamed',
+    campaign: 'new',
+    priority: 5,
+  });
+  assert.equal(updated.status, 200);
+  assert.equal(updated.body.name, 'renamed');
+  assert.equal(updated.body.labels.campaign, 'new');
+  assert.equal(updated.body.labels.preserved, 'yes');
+  assert.deepEqual(updated.body.spec, job.spec);
+  assert.equal(updated.body.spec_sha256, job.spec_sha256);
+  const cleared = await call('patch', `/jobs/${job.id}`, { campaign: null });
+  assert.equal(cleared.body.labels.campaign, undefined);
+  assert.equal((await call('patch', `/jobs/${job.id}`, { spec: { target_steps: 1 } })).status, 422);
+  assert.equal((await call('patch', `/jobs/${job.id}`, { name: 'reader' }, read)).status, 403);
+  assert.equal((await call('delete', `/jobs/${job.id}`, undefined, read)).status, 403);
+  const active = await attached('active-management');
+  assert.equal(
+    (await call('patch', `/jobs/${active.job.id}`, { name: 'active renamed' })).status,
+    200,
+  );
+  assert.equal((await call('patch', `/jobs/${active.job.id}`, { priority: 1 })).status, 409);
+  assert.equal((await call('delete', `/jobs/${active.job.id}`)).body.code, 'job_active');
+});
+
+test('permanent deletion removes output bytes and ZIPs, survives cleanup failure, and fences cached replies', async (t) => {
+  const { job, assignment, worker } = await attached('delete-results');
+  const createdRequest = (await db.list('requests')).find((r) => r.reply?.body?.id === job.id)!;
+  const file = await upload('result', Buffer.from('private output'), job, assignment.attempt_id);
+  const dataset = await upload('dataset', Buffer.from('shared input'));
+  await system.background.tick();
+  const finished = await call('post', `/attempts/${assignment.attempt_id}/finish`, {
+    ...lease(assignment, worker),
+    outcome: 'cancelled',
+    stage: 'uploading',
+    error: null,
+    artifact_ids: [file.id],
+    manifest: {
+      spec_sha256: job.spec_sha256,
+      config_sha256: hash('unused'),
+      completed_steps: 0,
+      target_steps: 100,
+      posthoc_completed: false,
+    },
+  });
+  assert.equal(finished.status, 202);
+  await system.background.tick();
+  const exportReply = await call('post', '/exports', {
+    job_ids: [job.id],
+    artifact_ids: [dataset.id],
+  });
+  assert.equal((await call('delete', `/jobs/${job.id}`)).body.code, 'export_busy');
+  await system.background.tick();
+  const exported = (await call('get', `/exports/${exportReply.body.id}`)).body;
+  assert.equal(exported.status, 'ready');
+  const originalLink = (await call('get', `/artifacts/${file.id}/download`)).body.url;
+  const deleteKey = crypto.randomUUID();
+  assert.equal((await call('delete', `/jobs/${job.id}`, undefined, write, deleteKey)).status, 202);
+  assert.equal((await call('get', `/artifacts/${file.id}/download`)).status, 404);
+  const u = new URL(originalLink);
+  assert.notEqual((await request(system.app).get(u.pathname + u.search)).status, 200);
+  assert.equal((await call('get', `/exports/${exported.id}`)).body.download, undefined);
+  assert.equal((await call('patch', `/jobs/${job.id}`, { name: 'resurrect' })).status, 409);
+  assert.equal((await call('post', `/jobs/${job.id}/actions`, { action: 'retry' })).status, 409);
+
+  system.storage.receiving.set(file.id, 1);
+  await system.background.tick();
+  assert.ok(await db.get('jobs', job.id));
+  system.storage.receiving.delete(file.id);
+  const failure = t.mock.method(system.storage, 'remove', async () => {
+    throw new Error('private storage failure');
+  });
+  await system.background.tick();
+  assert.equal((await db.get('jobs', job.id))!.deletion_error.code, 'storage_error');
+  failure.mock.restore();
+  await call('delete', `/jobs/${job.id}`); // explicit retry clears the backoff
+  const { Background } = await import('../src/services/background.js');
+  await new Background(db, system.storage).tick(); // recover persisted deletion in a fresh processor
+  assert.equal((await call('get', `/jobs/${job.id}`)).status, 404);
+  assert.equal((await call('get', `/artifacts/${file.id}/download`)).status, 404);
+  assert.equal((await call('get', `/exports/${exported.id}`)).status, 404);
+  await assert.rejects(readFile(system.storage.localPath(file.id)), { code: 'ENOENT' });
+  await assert.rejects(readFile(system.storage.localPath(exported.id)), { code: 'ENOENT' });
+  assert.equal(
+    (await db.list('attempts')).some((a) => a.job_id === job.id),
+    false,
+  );
+  assert.equal((await call('get', `/artifacts/${dataset.id}/download`)).status, 200);
+  assert.equal((await db.get('requests', createdRequest.id))!.state, 'deleted');
+  assert.equal((await db.get('requests', createdRequest.id))!.reply, null);
+  assert.equal((await call('post', '/jobs', {}, write, createdRequest.id)).status, 410);
+  assert.equal((await call('delete', `/jobs/${job.id}`, undefined, write, deleteKey)).status, 202);
+  assert.equal((await call('delete', `/jobs/${job.id}`)).status, 204);
+  assert.ok((await db.list('audit')).some((a) => a.action === 'job.delete' && a.job_id === job.id));
 });

@@ -6,6 +6,8 @@ import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import {
   GetObjectCommand,
+  DeleteObjectsCommand,
+  ListObjectVersionsCommand,
   HeadObjectCommand,
   PutObjectCommand,
   S3Client,
@@ -18,6 +20,7 @@ import { ApiError, assert, equal, secret } from '../util.js';
 export class Storage {
   private s3?: S3Client;
   readonly directory: string;
+  readonly receiving = new Map<string, number>();
   constructor(public config: Config) {
     this.directory = resolveRoot(config.STORAGE_DIRECTORY);
     if (config.STORAGE_DRIVER === 's3') this.s3 = new S3Client({ region: config.AWS_REGION });
@@ -86,9 +89,13 @@ export class Storage {
           : {},
     };
   }
-  async receive(id: string, stream: Readable, expectedSize: number) {
+  async receive(
+    id: string,
+    stream: Readable,
+    expectedSize: number,
+    canPublish?: () => Promise<boolean>,
+  ) {
     assert(!this.s3, 404, 'not_found', 'Use the S3 upload URL');
-    await mkdir(this.directory, { recursive: true, mode: 0o700 });
     const temporary = path.join(this.directory, `.upload-${secret()}`);
     let bytes = 0;
     const limiter = new Transform({
@@ -99,9 +106,12 @@ export class Storage {
         else cb(null, chunk);
       },
     });
+    this.receiving.set(id, (this.receiving.get(id) || 0) + 1);
     try {
+      await mkdir(this.directory, { recursive: true, mode: 0o700 });
       await pipeline(stream, limiter, createWriteStream(temporary, { flags: 'wx', mode: 0o600 }));
       assert(bytes === expectedSize, 422, 'size_mismatch', 'Upload differs from declared size');
+      assert(!canPublish || (await canPublish()), 409, 'upload_closed', 'Upload is no longer open');
       try {
         await link(temporary, this.localPath(id));
       } catch (e: any) {
@@ -115,6 +125,46 @@ export class Storage {
       }
     } finally {
       await unlink(temporary).catch(() => {});
+      const remaining = this.receiving.get(id)! - 1;
+      if (remaining) this.receiving.set(id, remaining);
+      else this.receiving.delete(id);
+    }
+  }
+  async remove(item: { id: string }) {
+    if (!this.s3) {
+      try {
+        await unlink(this.localPath(item.id));
+      } catch (error: any) {
+        if (error.code !== 'ENOENT') throw error;
+      }
+      return;
+    }
+    const key = this.key(item.id);
+    // Delete all versions, including delete markers; a plain S3 delete retains bytes.
+    while (true) {
+      const page = await this.s3.send(
+        new ListObjectVersionsCommand({
+          Bucket: this.config.S3_BUCKET,
+          Prefix: key,
+          MaxKeys: 1000,
+        }),
+      );
+      const objects = [...(page.Versions || []), ...(page.DeleteMarkers || [])]
+        .filter((v) => v.Key === key)
+        .map((v) => ({ Key: v.Key!, VersionId: v.VersionId! }));
+      if (!objects.length) return;
+      const result = await this.s3.send(
+        new DeleteObjectsCommand({
+          Bucket: this.config.S3_BUCKET,
+          Delete: { Objects: objects, Quiet: true },
+        }),
+      );
+      assert(
+        !result.Errors?.length,
+        503,
+        'storage_delete_failed',
+        'Object versions could not be deleted',
+      );
     }
   }
   async inspect(item: any) {

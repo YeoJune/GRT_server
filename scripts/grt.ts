@@ -130,7 +130,21 @@ try {
     );
   else if (resource === 'jobs' && command === 'get')
     result = await request(`/jobs/${encodeURIComponent(subject)}`);
-  else if (resource === 'jobs' && ['cancel', 'retry', 'clone'].includes(command))
+  else if (resource === 'jobs' && command === 'update') {
+    const changes = option('--file');
+    if (!subject || !changes) throw new Error('Use jobs update ID --file metadata.json');
+    result = await request(
+      `/jobs/${encodeURIComponent(subject)}`,
+      'PATCH',
+      JSON.parse(await readFile(changes, 'utf8')),
+    );
+  } else if (resource === 'jobs' && command === 'delete') {
+    if (!subject || !args.includes('--yes'))
+      throw new Error(
+        'Permanent deletion removes experiment data and result files. Use jobs delete ID --yes',
+      );
+    result = await request(`/jobs/${encodeURIComponent(subject)}`, 'DELETE');
+  } else if (resource === 'jobs' && ['cancel', 'retry', 'clone'].includes(command))
     result = await request(`/jobs/${encodeURIComponent(subject)}/actions`, 'POST', {
       action: command,
       ...(option('--evidence') ? { termination_evidence: option('--evidence') } : {}),
@@ -170,7 +184,7 @@ try {
     delete result.token;
   } else
     throw new Error(
-      'Commands: me; jobs submit|validate|batch FILE, list [--queue NAME], get|cancel|retry|clone ID; queues create|pause|resume NAME; workers drain|resume ID; schemas register FILE; results collect [--campaign NAME] [--new] [--output DIR]; exports create --jobs ID,ID; exports get ID; requests get ID; tokens create --kind read-only --expires-at ISO',
+      'Commands: me; jobs submit|validate|batch FILE, list [--queue NAME], get|cancel|retry|clone ID, update ID --file metadata.json, delete ID --yes; queues create|pause|resume NAME; workers drain|resume ID; schemas register FILE; results collect [--campaign NAME] [--new] [--output DIR]; exports create --jobs ID,ID; exports get ID; requests get ID; tokens create --kind read-only --expires-at ISO',
     );
   if (result?.csrf_token) delete result.csrf_token;
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);

@@ -55,6 +55,12 @@ export async function mutation(
     const record = key ? await tx.get('requests', key) : undefined;
     if (record) {
       assert(
+        record.state !== 'deleted',
+        410,
+        'resource_deleted',
+        'The referenced experiment was permanently deleted',
+      );
+      assert(
         record.request_hash === requestHash,
         409,
         'idempotency_conflict',

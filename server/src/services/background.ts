@@ -50,6 +50,55 @@ export class Background {
       await this.finalize(a);
     for (const e of (await this.db.list('exports')).filter((e) => e.status === 'preparing'))
       await this.export(e);
+    for (const job of (await this.db.list('jobs')).filter((j) => j.status === 'deleting'))
+      await this.deleteJob(job);
+  }
+  private async deleteJob(job: RecordData) {
+    if (Date.parse(job.delete_after) > Date.now() || Date.parse(job.delete_retry_at) > Date.now())
+      return;
+    const artifacts = (await this.db.list('artifacts')).filter((a) => a.job_id === job.id);
+    if (artifacts.some((a) => this.storage.receiving.has(a.id))) return;
+    const ids = new Set(artifacts.map((a) => a.id));
+    const exports = (await this.db.list('exports')).filter((e) =>
+      e.artifacts.some((a: any) => ids.has(a.id)),
+    );
+    try {
+      for (const item of [...exports, ...artifacts]) await this.storage.remove(item);
+      await this.db.write(async (tx) => {
+        const attempts = (await tx.list('attempts')).filter((a) => a.job_id === job.id);
+        const removedIds = new Set([
+          job.id,
+          ...ids,
+          ...exports.map((e) => e.id),
+          ...attempts.map((a) => a.id),
+        ]);
+        const references = (value: any): boolean =>
+          typeof value === 'string'
+            ? removedIds.has(value)
+            : !!value && typeof value === 'object' && Object.values(value).some(references);
+        // Keep idempotency tombstones, not cached specs/files that could be replayed.
+        for (const record of await tx.list('requests'))
+          if (!record.reply?.body?.deletion_requested && references(record.reply))
+            await tx.put('requests', { ...record, state: 'deleted', reply: null });
+        for (const worker of await tx.list('workers'))
+          if (removedIds.has(worker.active_attempt_id))
+            await tx.put('workers', { ...worker, active_attempt_id: null });
+        for (const e of exports) await tx.remove('exports', e.id);
+        for (const a of artifacts) await tx.remove('artifacts', a.id);
+        for (const a of attempts) await tx.remove('attempts', a.id);
+        await tx.remove('jobs', job.id);
+      });
+    } catch (error) {
+      await this.db.write(async (tx) => {
+        const current = await tx.get('jobs', job.id);
+        if (current?.status === 'deleting')
+          await tx.put('jobs', {
+            ...current,
+            deletion_error: this.safeError(error),
+            delete_retry_at: new Date(Date.now() + 30000).toISOString(),
+          });
+      });
+    }
   }
   private safeError(error: any) {
     return error instanceof ApiError
@@ -90,9 +139,11 @@ export class Background {
       // Missing objects/storage outages may be temporary. Keep requests durable across restarts.
       const transient = !(error instanceof ApiError);
       if (transient && Date.now() - Date.parse(a.verification_requested_at) < 600000) return;
-      await this.db.write((tx) =>
-        tx.put('artifacts', { ...a, status: 'failed', error: this.safeError(error) }),
-      );
+      await this.db.write(async (tx) => {
+        const current = await tx.get('artifacts', a.id);
+        if (current?.status === 'verifying')
+          await tx.put('artifacts', { ...current, status: 'failed', error: this.safeError(error) });
+      });
     }
   }
   private async finalize(a: RecordData) {

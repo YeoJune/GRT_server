@@ -41,3 +41,75 @@ test('local exports publish complete immutable bytes, including across filesyste
     await rm(destination, { recursive: true, force: true });
   }
 });
+
+test('revoked uploads cannot publish bytes and local deletion is idempotent', async () => {
+  const { Readable } = await import('node:stream');
+  const directory = await mkdtemp(path.join(tmpdir(), 'grt-delete-'));
+  const storage = new Storage(
+    loadConfig({
+      NODE_ENV: 'test',
+      STORAGE_DIRECTORY: directory,
+      STORAGE_SIGNING_KEY: 'test-key-'.repeat(8),
+    }),
+  );
+  try {
+    await assert.rejects(
+      storage.receive('art_revoked', Readable.from([Buffer.from('bytes')]), 5, async () => false),
+      { code: 'upload_closed' },
+    );
+    assert.equal(storage.receiving.size, 0);
+    assert.deepEqual(await readdir(directory), []);
+    await writeFile(storage.localPath('art_delete'), 'result');
+    await storage.remove({ id: 'art_delete' });
+    await storage.remove({ id: 'art_delete' });
+    assert.deepEqual(await readdir(directory), []);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('S3 deletion removes only the exact key, all versions and markers, and reports partial failures', async () => {
+  const { ListObjectVersionsCommand, DeleteObjectsCommand } = await import('@aws-sdk/client-s3');
+  const storage = new Storage(
+    loadConfig({
+      NODE_ENV: 'test',
+      STORAGE_DRIVER: 's3',
+      S3_BUCKET: 'test-bucket',
+      STORAGE_SIGNING_KEY: 'test-key-'.repeat(8),
+    }),
+  );
+  const deleted: any[] = [];
+  const pages = [
+    {
+      Versions: [
+        { Key: 'grt/art_test', VersionId: 'v1' },
+        { Key: 'grt/art_test_other', VersionId: 'keep' },
+      ],
+      DeleteMarkers: [{ Key: 'grt/art_test', VersionId: 'marker' }],
+      IsTruncated: true,
+    },
+    { Versions: [{ Key: 'grt/art_test', VersionId: 'v2' }] },
+    {},
+  ];
+  (storage as any).s3 = {
+    send: async (command: any) => {
+      if (command instanceof ListObjectVersionsCommand) return pages.shift();
+      assert.ok(command instanceof DeleteObjectsCommand);
+      deleted.push(...command.input.Delete.Objects);
+      return {};
+    },
+  };
+  await storage.remove({ id: 'art_test' });
+  assert.deepEqual(deleted, [
+    { Key: 'grt/art_test', VersionId: 'v1' },
+    { Key: 'grt/art_test', VersionId: 'marker' },
+    { Key: 'grt/art_test', VersionId: 'v2' },
+  ]);
+  (storage as any).s3 = {
+    send: async (command: any) =>
+      command instanceof ListObjectVersionsCommand
+        ? { Versions: [{ Key: 'grt/art_test', VersionId: 'v1' }] }
+        : { Errors: [{ Code: 'AccessDenied' }] },
+  };
+  await assert.rejects(storage.remove({ id: 'art_test' }), { code: 'storage_delete_failed' });
+});

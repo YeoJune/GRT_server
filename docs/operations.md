@@ -158,7 +158,7 @@ npm run account:reset
 
 백업에는 인증 DB와 `.env`가 있으므로 접근을 제한합니다. 코드 commit·systemd/Caddy 설정과 복구에 필요한 서명 키 보관 위치도 기록합니다. 복원은 별도 경로/인스턴스에 수행하고, 같은 코드·필수 설정으로 migration과 시작을 확인한 뒤 로그인·job 이력·원본 파일 hash를 비교합니다. 확인된 복원본으로 전환하기 전 운영 폴더를 덮어쓰지 않습니다.
 
-원본 파일과 ZIP은 자동 삭제하지 않습니다. 디스크 사용량을 확인하고, 테스트 토큰·임시 큐와 데이터 정리는 소유자의 관리 작업으로 수행합니다.
+보관 기간에 따른 자동 삭제는 없습니다. 웹·CLI의 실험 영구 삭제는 해당 원본·모든 checkpoint·관련 ZIP을 제거하며 되돌릴 수 없습니다. running/finalizing 작업은 종료 후 삭제합니다. 삭제 중 오류는 상세의 deletion_error와 저장소 권한·서버 로그를 확인합니다. 서버는 30초 뒤 재시도하고 재시작 후에도 이어갑니다. 외부 다운로드·백업은 이 삭제 대상에 포함되지 않습니다. 디스크 사용량을 확인하고, 테스트 토큰·임시 큐와 데이터 정리는 소유자의 관리 작업으로 수행합니다.
 
 ## 선택 DB·저장소
 
@@ -182,6 +182,8 @@ S3_BUCKET=your-private-versioned-bucket
 S3_PREFIX=grt/
 ```
 
-버킷은 비공개·암호화·versioning을 적용하고 서버 IAM role에 해당 prefix의 GetObject / GetObjectVersion / PutObject 권한을 부여합니다. AWS SDK 기본 credential chain을 사용합니다. 검증한 VersionId만 다운로드하며 URL 수명은 최대 5분과 현재 인증 만료 중 짧은 값입니다.
+버킷은 비공개·암호화·versioning을 적용하고 서버 IAM role에 해당 prefix의 `s3:GetObject` / `s3:GetObjectVersion` / `s3:PutObject` / `s3:DeleteObject` / `s3:DeleteObjectVersion` 권한을 부여합니다. 버킷에는 `s3:ListBucketVersions`를 해당 prefix 조건으로 허용합니다. 삭제는 현재 버전뿐 아니라 같은 object key의 모든 버전·delete marker를 제거합니다. Object Lock·권한 거부가 있으면 완료 처리하지 않고 재시도합니다. AWS SDK 기본 credential chain을 사용합니다. 검증한 VersionId만 다운로드하며 URL 수명은 최대 5분과 현재 인증 만료 중 짧은 값입니다.
+
+S3 삭제는 이미 발급된 서명 URL의 유효기간(최대 5분) 이후 처리합니다. 이미 시작된 외부 전송·별도 복제본과 백업은 별도 관리 대상입니다. 실제 S3 권한·versioning·삭제는 선택 구성 도입 시 확인하세요.
 
 설정 변경은 기존 데이터의 자동 이전을 수행하지 않습니다. 서버 정지 → DB·파일 백업 → 복사·검증 → 설정 전환 순서로 이전하고 실제 DB/S3에서 claim·파일 hash·ZIP·복원을 재검사합니다. Vast offer 검색만 필요하면 `VAST_API_KEY`를 추가합니다. 유료 임대와 자동 과금 종료는 제공하지 않습니다.
