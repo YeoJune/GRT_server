@@ -71,6 +71,41 @@ posthoc 단계의 첫 오류는 의도한 것이다. **뒤의 올바른 옵션 �
 
 기본 코스를 실행하면 임시 read-only 토큰은 바로 폐기한다. 최초에 브라우저에서 발급한 notebook write 토큰은 플랫폼·추가 검사를 끝낸 뒤 폐기한다.
 
+### ZIP 단계에서만 실패했을 때
+
+학습과 개별 파일 전송이 끝났는데 ZIP이 실패하면 재학습하지 않는다. 서버가 `/tmp`와 artifact 디렉터리 사이를 하드링크하던 이전 버전은 두 경로의 파일시스템이 다르면 `EXDEV`로 실패할 수 있다. 수정 버전은 저장소 내부에 완전히 복사한 뒤 원자적으로 공개한다.
+
+EC2에서 최신 서버를 반영한다.
+
+```bash
+cd /home/ec2-user/GRT_server
+git pull --ff-only origin main
+npm run build
+sudo systemctl restart grt
+curl --fail --show-error https://grt.grtserver.cloud/healthz
+```
+
+기존 Colab 런타임과 변수를 유지하고 **새 코드 셀에 아래만 실행**한다. Colab의 GRT checkout을 중간에 갱신하거나 설정·학습을 다시 실행하지 않는다. 실패한 요청의 동일 Idempotency-Key를 재사용하면 과거 응답을 받을 수 있으므로 새 key를 사용한다.
+
+```python
+export = client.request('POST', '/exports', {'job_ids': [upload_job['id']]}, key=uuid4().hex)
+export = wait_for(lambda: client.request('GET', '/exports/' + export['id']),
+                  lambda item: item['status'] != 'preparing')
+if export['status'] != 'ready':
+    raise RuntimeError(f"ZIP 실패: {export['id']} / {(export.get('error') or {}).get('code')}")
+archive = collected / 'results.zip'
+archive.write_bytes(transfer('GET', export['download']['url']).content)
+from zipfile import ZipFile
+with ZipFile(archive) as bundle:
+    assert bundle.testzip() is None
+    zip_digests = {hashlib.sha256(bundle.read(name)).hexdigest()
+                   for name in bundle.namelist() if not name.endswith('/')}
+assert {item['sha256'] for item in verified} <= zip_digests
+record('download_zip_repeat', job_id=upload_job['id'], verified_files=len(verified))
+```
+
+PASS가 나오면 기존 notebook의 다음 posthoc 단계로 이어간다. 실패하면 위에서 표시한 export ID와 오류 코드만 공유한다. 서명 URL은 공유하지 않는다.
+
 ## 5. 브라우저에서 함께 확인
 
 notebook의 출력에 있는 시험 이름으로 필터링한다.

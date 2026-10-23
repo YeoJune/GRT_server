@@ -1,6 +1,6 @@
 import { createHmac, createHash } from 'node:crypto';
-import { createReadStream, createWriteStream } from 'node:fs';
-import { mkdir, stat, link, unlink } from 'node:fs/promises';
+import { constants, createReadStream, createWriteStream } from 'node:fs';
+import { copyFile, mkdir, stat, link, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -205,7 +205,15 @@ export class Storage {
       return result.VersionId;
     }
     await mkdir(this.directory, { recursive: true, mode: 0o700 });
-    await link(filename, this.localPath(id));
+    // ZIP staging may be on /tmp (tmpfs), while artifacts live on an EBS mount.
+    // Copy fully onto the destination filesystem before publishing immutable bytes.
+    const temporary = path.join(this.directory, `.export-${secret()}`);
+    try {
+      await copyFile(filename, temporary, constants.COPYFILE_EXCL);
+      await link(temporary, this.localPath(id));
+    } finally {
+      await unlink(temporary).catch(() => {});
+    }
     return 'local-immutable-v1';
   }
 }
