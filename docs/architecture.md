@@ -1,4 +1,4 @@
-# 구현 구조와 설계 적용
+# 구현 구조
 
 ```text
 web (React) ── /v1 ── Express
@@ -14,11 +14,11 @@ CLI / worker ───────────┤
 
 단일 소유자, 작은 연구 큐를 위한 초기 구현입니다. `accounts`, `sessions`, `tokens`, `settings`, `schemas`, `queues`, `workers`, `jobs`, `attempts`, `artifacts`, `exports`, `requests`, `audit` 테이블을 분리하고, 각 테이블은 `id`, `created_at`, `body`를 가집니다. 확장 JSON을 SQLite/PostgreSQL에서 동일하게 보존하기 위해 payload를 JSON text로 저장합니다.
 
-ID·생성 시각에는 SQL index가 있으며, 현재 상태·campaign·호환 필터는 서비스에서 수행합니다. 따라서 데이터가 커지면 `status`, `queue`, `job_id` 등을 SQL 열로 추출하고 repository에서 필터·pagination을 처리하는 migration이 필요합니다. 현재 구현을 대규모 분산 scheduler로 사용하지 마세요.
+ID·생성 시각에는 SQL index가 있으며 상태·campaign·호환 필터와 pagination은 서비스에서 수행합니다. 현재 구현은 단일 소유자의 작은 연구 큐를 대상으로 합니다.
 
 DB 변경은 Knex migration으로 관리합니다. SQLite는 WAL + 단일 연결, PostgreSQL은 transaction의 singleton row lock으로 제어 변경·claim·중복 키 저장을 직렬화합니다. 다중 프로세스 운영은 현재 범위가 아닙니다. 백그라운드 검증기는 서버 프로세스 하나에서 실행하세요.
 
-운영 설정은 실제 적용되는 최대 실행 시간과 전송 여유만 제공합니다. 자동 삭제가 구현되지 않은 보관 일수 입력은 제공하지 않습니다. 이전 DB의 설정값과 원본 파일은 삭제하지 않습니다.
+운영 설정은 최대 실행 시간과 전송 여유를 제공합니다. 자동 삭제와 보관 일수 설정은 제공하지 않습니다.
 
 ## 인증과 로그
 
@@ -44,10 +44,10 @@ Retry는 불변 spec의 새 attempt를 대기열에 넣고, 다음 claim에서 g
 
 로컬 업로드는 임시 파일에 streaming 후 hard link로 한 번만 확정합니다. 사용자 파일명은 저장 경로로 사용하지 않습니다. S3는 업로드를 예약하고 client가 직접 전송합니다. 검증기는 실제 bytes를 SHA256으로 읽으며, 검증한 object version만 이후 다운로드합니다.
 
-Export는 요청 시 verified artifact ID/hash/version 집합을 고정합니다. 하나의 ZIP에 원본 파일과 manifest를 담고 fingerprint가 같으면 기존 결과를 재사용합니다. 초기 제한은 preparing 2개, 총 원본 bytes 한도입니다. Export API의 24시간 만료는 접근·재사용 기간이며 자동 파일 삭제 작업은 아직 없습니다.
+Export는 요청 시 verified artifact ID/hash/version 집합을 고정합니다. 하나의 ZIP에 원본 파일과 manifest를 담고 fingerprint가 같은 preparing/ready 결과는 재사용합니다. 로컬 ZIP은 저장 디렉터리의 임시 파일로 완전히 복사한 뒤 같은 파일시스템에서 hard link로 확정하므로, OS 임시 디렉터리와 저장소가 다른 mount여도 동작하며 기존 원본은 덮어쓰지 않습니다. 제한은 preparing 2개와 총 원본 bytes 한도입니다. Export API의 24시간 만료는 접근·재사용 기간이며 자동 파일 삭제는 없습니다.
 
 검증은 별도 broker 없이 DB 기반 polling으로 실행합니다. 파일 검증 중 일시적인 object 미존재·저장 장애는 최대 10분 재시도합니다. Finalizing에서 미검증 파일 대기는 최대 24시간입니다. 크기/hash/schema 불일치는 실패 사유를 보존합니다.
 
-## 설계와 차이
+## 실행기와 구현 범위
 
-FastAPI 대신 Express를 사용합니다. 초기 운영을 간단히 하기 위해 로컬 저장소를 기본 제공하고 S3를 선택 가능하게 했습니다. GRT 공통 helper는 `generic/1`과 불변 schema로 선택적 upload/queue 연결을 제공하며 실제 연구 Config·원본 결과와 서버 검증용 envelope를 구분합니다. 임대 비용이 발생하는 Vast 조작, independent watchdog, 서버 checkpoint 자동 복원, 자동 retention과 GRT 과학적 완료 검증은 구현하지 않았고 capabilities에 공개했습니다. 무한 성공 응답이나 가짜 allocation을 반환하지 않습니다.
+GRT 공통 helper는 `generic/1`과 불변 schema로 upload/queue 연결을 제공하며 실제 연구 Config·원본 결과와 서버 검증용 envelope를 구분합니다. 임대 비용이 발생하는 Vast 조작, 독립 과금 감시, 서버 checkpoint 자동 복원, 자동 삭제와 GRT 과학적 완료 검증은 미지원이며 capabilities에 공개합니다. 실행기 사용법은 [GRT 서버 연결](https://github.com/YeoJune/GRT/blob/main/docs/server.md)을 따릅니다.

@@ -57,7 +57,7 @@ Cookie 세션은 기본 절대 8시간 / idle 30분입니다. Token session은 �
 
 현재 실행 adapter는 `generic/1`만 지원합니다. JSON Schema draft-07 strict mode를 사용하며 schema의 default를 복제한 spec에 적용합니다. Schema를 나중에 바꾸지 않고 새 ID를 등록합니다. `spec.target_steps`는 양의 정수여야 합니다.
 
-설정은 새 작업에 적용합니다. 동작하지 않던 보관 일수 입력은 제거했으며 PATCH에 해당 필드를 보내면 422입니다. 기존 DB에 저장된 보관 일수 값과 파일은 그대로 보존하고 자동 삭제하지 않습니다.
+설정은 새 작업에 적용합니다. 자동 삭제와 보관 일수 설정은 제공하지 않으며, 지원하지 않는 설정 필드는 422입니다.
 
 ## 실험
 
@@ -208,6 +208,8 @@ Provenance JSON:
 - `POST /allocations`, `/allocations/{id}/actions`, `/workers/enroll`: write 권한 검사 후 501, 유료 작업 없음.
 
 서명 URL은 token 폐기 후에도 자체 만료까지 유효할 수 있습니다. API 폐기와 이미 발급된 URL의 수명을 구분하세요.
+
+ZIP 요청 접수는 생성 성공을 뜻하지 않습니다. `ready`까지 조회하고 `failed`이면 `error`를 확인합니다. 원인을 해결한 뒤 새 Idempotency-Key로 다시 요청하세요. 같은 파일 집합의 preparing/ready ZIP은 재사용하지만 실패한 ZIP은 재사용하지 않습니다. 학습·원본 업로드를 다시 수행할 필요는 없습니다.
 
 ## CLI
 

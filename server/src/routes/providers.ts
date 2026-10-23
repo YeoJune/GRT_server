@@ -39,8 +39,5 @@ export function providerRoutes(c: Config) {
       'Paid allocations require independent deadline monitoring and bootstrap enrollment; this release does not create paid GPU instances',
     );
   });
-  r.get(['/allocations/:id', '/operations/:id'], () => {
-    throw new ApiError(404, 'not_found', 'Operation/allocation not found');
-  });
   return r;
 }

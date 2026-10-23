@@ -1,5 +1,7 @@
 # AWS 기능 테스트 실행 가이드
 
+> 2026-10-23 배포 점검 당시 기록입니다. 임시 notebook은 정리했으며, 현재 사용법은 [운영 문서](../operations.md)와 [API](../api.md)를 따릅니다.
+
 대상: **https://grt.grtserver.cloud**. 먼저 아래 기본 코스를 실행하고, 마지막의 수동·장애 검사로 이어간다. 세부 점검 ID와 판정표는 [전체 점검안](20261023_aws_acceptance_test_plan.md)에 있다. 이 문서는 실행 안내이며 실제 환경의 통과 기록이 아니다.
 
 작성 시 임시 Express·SQLite 서버와 CPU로 기본 코스의 12개 자동 판정, 실제 WikiText 표본의 GRT upload와 off·NeoX·RMT 추가 실행을 검증했다. AWS·GPU·플랫폼 Secret 검증은 아래 절차로 별도 수행한다. notebook에는 실행 출력이나 비밀값을 저장하지 않는다.
@@ -9,7 +11,7 @@
 1. 서버에 비밀번호로 로그인한다.
 2. **설정 → API 토큰**에서 `acceptance-notebook`이라는 **write** 토큰을 발급한다. 테스트가 끝날 때까지 유효하게 한다.
 3. Colab 왼쪽 열쇠(Secrets) 또는 Kaggle Add-ons → Secrets에 **`GRT_SERVER_TOKEN`**으로 등록하고 notebook 접근을 켠다. 토큰을 코드 셀에 붙여 넣지 않는다.
-4. [임시 테스트 노트북](https://github.com/YeoJune/GRT/blob/main/notebooks/tmp_server_acceptance.ipynb)을 연다. [Colab 바로 실행](https://colab.research.google.com/github/YeoJune/GRT/blob/main/notebooks/tmp_server_acceptance.ipynb). Kaggle은 GitHub에서 notebook을 가져오고 Internet·GPU를 켠다.
+4. [임시 테스트 노트북](https://github.com/YeoJune/GRT/blob/345ae41fc47756b832a6e1ad34c12cccdb1e24dd/notebooks/tmp_server_acceptance.ipynb)을 연다. [Colab 바로 실행](https://colab.research.google.com/github/YeoJune/GRT/blob/345ae41fc47756b832a6e1ad34c12cccdb1e24dd/notebooks/tmp_server_acceptance.ipynb). Kaggle은 GitHub에서 notebook을 가져오고 Internet·GPU를 켠다.
 5. Colab/Kaggle의 GPU 런타임을 선택한다. 이 테스트는 GPU 1개만 사용한다.
 
 실험용 토큰은 write이므로 서버 전체 변경 권한이 있다. 개인 테스트 notebook에서 사용하고, 점검이 끝나면 서버에서 폐기한다.
@@ -172,7 +174,7 @@ npm run cli -- results collect --campaign acceptance-YYYYMMDDTHHMMSS-xxxxxx-uplo
 unset GRT_SERVER_TOKEN
 ```
 
-두 번째 collect는 hash가 일치하는 파일을 건너뛰어야 한다. 수집한 파일 복사본 하나를 변경한 뒤 재수집하면 손상을 감지하고 다시 가져와야 한다. 원 연구 파일을 변경하지 않는다. token 발급 CLI는 redirect하지 않는다. 나머지 명령은 [API 가이드의 CLI 예제](api.md#cli)를 따른다.
+두 번째 collect는 hash가 일치하는 파일을 건너뛰어야 한다. 수집한 파일 복사본 하나를 변경한 뒤 재수집하면 손상을 감지하고 다시 가져와야 한다. 원 연구 파일을 변경하지 않는다. token 발급 CLI는 redirect하지 않는다. 나머지 명령은 [API 가이드의 CLI 예제](../api.md#cli)를 따른다.
 
 ## 8. 장애·정합성 검사
 

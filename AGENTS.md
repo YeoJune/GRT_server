@@ -14,9 +14,9 @@ GRT 연구의 실험 설정·큐·실행 상태·결과를 관리하는 단일 �
 
 ## 문서와 데이터 관리
 
-- 실행·운영 방법은 `README.md`, API 사용법은 `docs/api.md`, 구현 구조와 설계 차이는 `docs/architecture.md`에 기록한다.
-- 세부 설계는 별도 문서로 관리하고 이 파일에는 공통 작업 지침만 둔다. 설계 기준은 [GRT API 설계안](https://github.com/YeoJune/GRT/blob/main/docs/20261021_experiment_control_api_design.md)을 참조하되, 문서의 날짜·적용 범위와 현재 구현을 함께 확인한다.
-- 동작이나 계약을 변경하면 관련 문서를 함께 갱신한다. 기록용 문서는 `YYYYMMDD_이름.md`로 남기고 임시 문서는 정리한다.
+- 시작 방법은 `README.md`, API는 `docs/api.md`, 운영은 `docs/operations.md`, 내부 구성은 `docs/architecture.md`에서 관리한다.
+- `docs/`에는 최신 사용법과 현재 계약만 유지한다. 지난 설계·계획·검증 기록은 `docs/archive/YYYYMMDD_이름.md`로 보존하며, 아카이브를 현재 실행 절차로 안내하지 않는다.
+- 임시 코드·notebook은 작업 후 제거한다. 코드와 설정의 과거 버전은 Git 이력으로 관리하고 아카이브에는 Markdown 기록만 둔다. 동작·계약이 바뀌면 현재 문서와 링크를 함께 갱신한다.
 - DB 구조 변경은 migration으로 관리한다. 기존 실험·파일·사용자 설정을 임의로 삭제하거나 덮어쓰지 않는다.
 
 ## 검증과 협업
