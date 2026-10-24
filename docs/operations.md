@@ -116,6 +116,8 @@ sudo journalctl -u grt -u caddy --since "10 minutes ago" --no-pager
 df -h /home/ec2-user/GRT_server
 ```
 
+`scripts/update.sh`가 없는 이전 checkout은 한 번 `git pull --ff-only origin main`을 실행한 뒤 사용합니다. 스크립트는 pull → npm ci → build → grt 재시작 → HTTPS healthz 재확인을 수행하고 실패하면 중단합니다. 서버 업데이트는 연결된 GPU 프로세스를 종료하거나 GRT checkout을 갱신하지 않습니다. 기존 큐 작업·재개에는 고정된 GRT 코드가 필요하므로 worker를 무조건 최신 commit으로 바꾸지 않습니다.
+
 DB migration은 시작 시 적용합니다. 별도로 실행하려면 `npm run db:migrate`를 사용합니다. 오류를 공유할 때는 시각·request/job/attempt ID와 비밀값을 제거한 로그를 함께 남깁니다.
 
 ZIP은 `ready`까지 조회합니다. 실패 원인을 해결한 뒤 새 Idempotency-Key로 ZIP만 다시 요청할 수 있으며 학습은 반복하지 않습니다. `/tmp`와 파일 저장소는 서로 다른 파일시스템이어도 됩니다. 로컬 ZIP은 저장소 내부에 완전히 복사한 뒤 원자적으로 확정합니다.

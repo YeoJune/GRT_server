@@ -62,6 +62,8 @@ cd /home/ec2-user/GRT_server
 sh scripts/update.sh
 ```
 
+이전 checkout에 스크립트가 없으면 먼저 `git pull --ff-only origin main`을 한 번 실행합니다.
+
 HTTPS·systemd·업데이트·백업/복원·선택 DB/S3 설정은 [운영 문서](docs/operations.md), 내부 구성은 [구현 구조](docs/architecture.md)에 정리했습니다.
 
 ```bash

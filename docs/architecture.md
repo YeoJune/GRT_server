@@ -18,7 +18,7 @@ ID·생성 시각에는 SQL index가 있으며 상태·campaign·호환 필터�
 
 DB 변경은 Knex migration으로 관리합니다. SQLite는 WAL + 단일 연결, PostgreSQL은 transaction의 singleton row lock으로 제어 변경·claim·중복 키 저장을 직렬화합니다. 다중 프로세스 운영은 현재 범위가 아닙니다. 백그라운드 검증기는 서버 프로세스 하나에서 실행하세요.
 
-운영 설정은 최대 실행 시간과 전송 여유를 제공합니다. 자동 삭제와 보관 일수 설정은 제공하지 않습니다.
+운영 설정은 최대 실행 시간과 전송 여유를 제공합니다. 기간에 따른 자동 삭제와 보관 일수 설정은 제공하지 않습니다. 재개 snapshot만 별도의 최근 2개 보존 규칙을 적용합니다.
 
 ## 인증과 로그
 
@@ -40,6 +40,8 @@ Finish는 generation과 필수 파일 ID·manifest를 고정하고 202를 반환
 
 Retry는 불변 spec의 fresh attempt를 대기열에 넣습니다. Resume은 같은 실험의 verified `grt.resume/1` snapshot ID를 연결하고 다음 claim에서 generation을 증가시킵니다. GRT worker가 명시적으로 요청한 복원을 실행하며 원본 attempt·파일은 보존합니다. 연결과 secret 설정은 spec·결과에 포함하지 마세요.
 
+재개 ZIP에는 현재 학습 state·best·실제 Config·배치 보정·metrics·W&B ID만 담고 secret/lease는 넣지 않습니다. 서버는 snapshot 최근 2개와 활성 재개의 원본을 보존하며 나머지는 retired 상태를 저장한 뒤 bytes를 삭제하고 purged 이력을 유지합니다. 삭제 실패·재시작은 DB 기록으로 재시도하며 preparing ZIP에 필요한 파일은 기다립니다.
+
 ## 파일·비동기 작업
 
 로컬 업로드는 임시 파일에 streaming 후 hard link로 한 번만 확정합니다. 사용자 파일명은 저장 경로로 사용하지 않습니다. S3는 업로드를 예약하고 client가 직접 전송합니다. 검증기는 실제 bytes를 SHA256으로 읽으며, 검증한 object version만 이후 다운로드합니다.
@@ -57,5 +59,3 @@ Export는 요청 시 verified artifact ID/hash/version 집합을 고정합니다
 ## 실행기와 구현 범위
 
 GRT 공통 helper는 `generic/1`과 불변 schema로 upload/queue 연결을 제공하며 실제 연구 Config·원본 결과와 서버 검증용 envelope를 구분합니다. 임대 비용이 발생하는 Vast 조작, 독립 과금 감시, 임의 checkpoint 복원, 보관 정책에 따른 자동 삭제와 GRT 과학적 완료 검증은 미지원이며 capabilities에 공개합니다. 실행기 사용법은 [GRT 서버 연결](https://github.com/YeoJune/GRT/blob/main/docs/server.md)을 따릅니다.
-
-재개 ZIP에는 현재 학습 state·best·실제 Config·배치 보정·metrics·W&B ID만 담고 secret/lease는 넣지 않습니다. 서버는 snapshot 최근 2개와 활성 재개의 원본을 보존하며 나머지는 retired 상태를 저장한 뒤 bytes를 삭제하고 purged 이력을 유지합니다. 삭제 실패·재시작은 DB 기록으로 재시도하며 preparing ZIP에 필요한 파일은 기다립니다.

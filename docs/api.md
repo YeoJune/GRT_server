@@ -20,7 +20,7 @@
 
 삭제된 실험을 포함한 과거 요청 응답은 정보 재노출·재생성을 막기 위해 제거하고, 같은 키의 재요청은 410 `resource_deleted`를 반환합니다.
 
-상태는 401 인증, 403 권한·CSRF, 409 정합성 충돌, 413 크기, 422 검증, 429 호출 제한입니다. GET 목록은 `?limit=50&cursor=...`를 받으며 `{data,next_cursor}`를 반환합니다. 추가 core 요청 필드는 422입니다. 자유 필드는 JSON Schema가 허용한 spec과 extensions/metrics/summary에 둡니다.
+상태는 401 인증, 403 권한·CSRF, 409 정합성 충돌, 413 크기, 422 검증, 429 호출 제한입니다. 일반 GET 목록은 `?limit=50&cursor=...`를 받으며 `{data,next_cursor}`를 반환합니다. `GET /datasets`는 현재 전체 목록 `{data}`를 반환하며 pagination은 지원하지 않습니다. 추가 core 요청 필드는 422입니다. 자유 필드는 JSON Schema가 허용한 spec과 extensions/metrics/summary에 둡니다.
 
 ## 로그인 / 토큰
 
@@ -85,6 +85,8 @@ Clone은 새로운 job을 만들며 overrides는 다시 schema 검증합니다.
 삭제는 running/finalizing이면 409 `job_active`, 관련 ZIP이 preparing이면 409 `export_busy`입니다. 취소·종료 또는 ZIP 완료 후 새 키로 요청하세요. 접수 즉시 API 파일 접근과 수정·재실행을 차단하고, 비동기 정리 후 GET은 404가 됩니다. `deletion_error`가 있으면 자동 재시도하며 새 DELETE 키로 즉시 재시도를 요청할 수 있습니다. S3는 기존 서명 URL 유효기간만큼 대기합니다. 감사 로그와 중복 방지용 최소 기록, 공유 dataset은 유지합니다. 다중 실험 ZIP은 통째로 삭제하며 다른 실험 원본은 유지합니다.
 
 Policy는 `max_attempt_seconds,eta_seconds,checkpointable,preflight_seconds,required_artifact_kinds,require_posthoc`를 받습니다. 기본 필수 파일은 report/config/provenance이고 이 세 증거는 generic adapter에서 항상 필수입니다. ETA 미측정은 checkpointable=true인 작업에만 claim을 허용합니다. 서버가 checkpoint 기능을 worker에 대신 구현하지 않습니다.
+
+재개용 snapshot은 최근 2개와 현재 배정·실행에 필요한 원본을 보존합니다. 나머지는 retired → purged로 bytes를 제거하며 metadata는 유지합니다. S3 URL 대기·파일 삭제 재시도를 적용하고 preparing ZIP이 원본을 읽는 동안은 정리를 기다립니다. 이 규칙은 snapshot 전용이며 일반 결과의 기간별 자동 삭제는 제공하지 않습니다.
 
 ## 실행기 / Claim / Heartbeat
 
@@ -205,7 +207,7 @@ Provenance JSON:
 { "spec_sha256": "...", "config_sha256": "...", "runner": "generic/1" }
 ```
 
-실제 Config는 원본 JSON 파일로 보존합니다. generic/1은 Config의 각 resolved spec 필드가 불변 spec과 같은지도 검사합니다. 환경 metadata는 추가 필드 또는 provenance에 기록할 수 있습니다. Manifest와 report의 완료 step은 불변 spec.target_steps를 충족하고, spec/config hash·runner·report schema와 필요한 posthoc를 모두 통과해야 합니다. 과학적 학습 검증이나 자동 checkpoint 복원은 별도 GRT adapter의 책임입니다.
+실제 Config는 원본 JSON 파일로 보존합니다. generic/1은 Config의 각 resolved spec 필드가 불변 spec과 같은지도 검사합니다. 환경 metadata는 추가 필드 또는 provenance에 기록할 수 있습니다. Manifest와 report의 완료 step은 불변 spec.target_steps를 충족하고, spec/config hash·runner·report schema와 필요한 posthoc를 모두 통과해야 합니다. 과학적 타당성 판정은 수행하지 않습니다. 명시적 resume snapshot 복원은 GRT worker가 담당합니다.
 
 ## Prepared 공유 캐시
 
@@ -226,7 +228,7 @@ ZIP 요청 접수는 생성 성공을 뜻하지 않습니다. `ready`까지 조�
 
 ## CLI
 
-환경별 준비·관리 예제는 [사용 가이드](environments.md)를 따릅니다. `metadata.json`에는 변경할 name/campaign 또는 대기 작업의 queue/priority만 넣습니다.
+환경별 준비·관리 예제는 [사용 가이드](environments.md)를 따릅니다. `metadata.json`에는 변경할 name/campaign/wandb_url 또는 대기 작업의 queue/priority만 넣습니다.
 
 토큰은 환경 secret으로 주입하고 명령행 인자로 전달하지 않습니다. `.env`에 GRT_SERVER_URL / GRT_SERVER_TOKEN을 적어도 되지만 Git에 올리지 마세요.
 
@@ -255,4 +257,4 @@ CLI는 기본 JSON을 출력하며 `--json`을 지원합니다. Token 발급 원
 
 특정 작업 재시도에 같은 키를 사용하려면 `GRT_REQUEST_ID` 환경변수를 고정합니다. 다른 명령에 같은 키를 재사용하면 409이므로 작업 단위로 설정하세요. 내장 shell·SSH·임의 Python 실행은 제공하지 않습니다. 브라우저는 GUI를 통해 동일 API를 사용하며 텍스트 명령 콘솔은 별도로 제공하지 않습니다.
 
-재개용 snapshot은 최근 2개와 현재 배정·실행에 필요한 원본을 보존합니다. 나머지는 retired → purged로 bytes를 제거하며 metadata는 유지합니다. S3 URL 대기·파일 삭제 재시도를 적용하고 preparing ZIP이 원본을 읽는 동안은 정리를 기다립니다. 이 규칙은 snapshot 전용이며 일반 결과의 기간별 자동 삭제는 제공하지 않습니다.
+`jobs list` CLI 필터는 현재 `--queue`만 지원합니다. Campaign·status 조합 조회는 웹 또는 `GET /jobs?campaign=...&status=...`를 사용하세요. `results collect --campaign`은 succeeded 작업의 verified 파일만 수집합니다. 부분 결과는 웹·파일 API로 받습니다.
