@@ -55,15 +55,11 @@ Vast는 키 설정 시 offer 검색만 제공합니다. 유료 임대·start/sto
 
 ## 운영과 검증
 
-EC2 서버 최신화:
+EC2 서버 최신화 ([스크립트](scripts/update.sh)). 실패하면 다음 단계를 중단합니다.
 
 ```bash
-cd /home/ec2-user/GRT_server && \
-git pull --ff-only origin main && \
-npm ci && \
-npm run build && \
-sudo systemctl restart grt && \
-curl --fail --show-error https://grt.grtserver.cloud/healthz
+cd /home/ec2-user/GRT_server
+sh scripts/update.sh
 ```
 
 HTTPS·systemd·업데이트·백업/복원·선택 DB/S3 설정은 [운영 문서](docs/operations.md), 내부 구성은 [구현 구조](docs/architecture.md)에 정리했습니다.

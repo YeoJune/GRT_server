@@ -110,11 +110,7 @@ curl --fail --show-error https://grt.grtserver.cloud/healthz
 
 ```bash
 cd /home/ec2-user/GRT_server
-git pull --ff-only origin main
-npm ci
-npm run build
-sudo systemctl restart grt
-curl --fail --show-error https://grt.grtserver.cloud/healthz
+sh scripts/update.sh
 sudo systemctl status grt caddy --no-pager
 sudo journalctl -u grt -u caddy --since "10 minutes ago" --no-pager
 df -h /home/ec2-user/GRT_server
