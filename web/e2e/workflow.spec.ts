@@ -98,6 +98,9 @@ test('owner registers a schema and a queued experiment; read-only session cannot
   }
   await page.screenshot({ path: '/tmp/grt-mobile.png', fullPage: true });
   await page.setViewportSize({ width: 1280, height: 900 });
+  page.once('dialog', (dialog) => dialog.accept());
+  await page.getByRole('button', { name: '취소', exact: true }).click();
+  await expect(page.getByRole('button', { name: '이어서 학습', exact: true })).toBeVisible();
   await page.screenshot({ path: '/tmp/grt-experiments.png', fullPage: true });
   await page.getByRole('button', { name: '설정', exact: true }).click();
   await page.getByRole('textbox', { name: '토큰 이름', exact: true }).fill('browser-reader');
@@ -117,6 +120,7 @@ test('owner registers a schema and a queued experiment; read-only session cannot
   await expect(page.getByRole('button', { name: '+ 신규 실험' })).toBeDisabled();
   await expect(page.getByRole('button', { name: '수정', exact: true })).toBeDisabled();
   await expect(page.getByRole('button', { name: '영구 삭제', exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', { name: '이어서 학습', exact: true })).toBeDisabled();
   await page.getByRole('button', { name: '큐·실행기', exact: true }).click();
   await expect(page.getByRole('button', { name: '+ 큐 만들기' })).toBeDisabled();
   await expect(page.getByRole('button', { name: '일시 정지', exact: true })).toBeDisabled();
@@ -130,6 +134,9 @@ test('owner registers a schema and a queued experiment; read-only session cannot
   await page.getByLabel('비밀번호', { exact: true }).fill('browser-test-password-123');
   await page.getByRole('button', { name: '로그인', exact: true }).click();
   await page.getByRole('button', { name: '실험', exact: true }).click();
+  page.once('dialog', (dialog) => dialog.accept());
+  await page.getByRole('button', { name: '이어서 학습', exact: true }).click();
+  await expect(page.getByRole('alert')).toContainText('verified GRT resume snapshot');
   page.once('dialog', (dialog) => dialog.dismiss());
   await page.getByRole('button', { name: '영구 삭제', exact: true }).click();
   await expect(page.getByRole('button', { name: '관리 실험', exact: true })).toBeVisible();

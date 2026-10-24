@@ -97,6 +97,7 @@ async function upload(
   job?: any,
   attempt?: string,
   expectedHash?: string,
+  extensions: Record<string, unknown> = {},
 ) {
   const reserve = await call('post', '/artifacts/uploads', {
     name: `${kind}.json`,
@@ -105,6 +106,7 @@ async function upload(
     format_version: '1',
     size_bytes: bytes.length,
     sha256: expectedHash || hash(bytes),
+    extensions,
     ...(job ? { job_id: job.id, attempt_id: attempt } : {}),
   });
   assert.equal(reserve.status, 201, JSON.stringify(reserve.body));
@@ -767,6 +769,7 @@ test('experiment metadata can change without changing its immutable spec; active
   assert.equal(updated.status, 200);
   assert.equal(updated.body.name, 'renamed');
   assert.equal(updated.body.summary.wandb_url, 'https://wandb.ai/grt/research/runs/example');
+  assert.equal((await call('patch', `/jobs/${job.id}`, { wandb_url: 'invalid-url' })).status, 422);
   assert.equal(
     (await call('patch', `/jobs/${job.id}`, { wandb_url: 'javascript:alert(1)' })).status,
     422,
@@ -858,4 +861,88 @@ test('permanent deletion removes output bytes and ZIPs, survives cleanup failure
   assert.equal((await call('delete', `/jobs/${job.id}`, undefined, write, deleteKey)).status, 202);
   assert.equal((await call('delete', `/jobs/${job.id}`)).status, 204);
   assert.ok((await db.list('audit')).some((a) => a.action === 'job.delete' && a.job_id === job.id));
+});
+
+test('resume requires a verified snapshot and termination; fresh retry clears the source; snapshots rotate safely', async () => {
+  const { job, assignment, worker } = await attached('resume-control');
+  assert.equal(
+    (await call('post', `/jobs/${job.id}/actions`, { action: 'resume' })).body.code,
+    'still_running',
+  );
+  await db.write(async (tx) => {
+    const a = (await tx.get('attempts', assignment.attempt_id))!;
+    await tx.put('attempts', { ...a, lease_expires_at: secondsFromNow(-10) });
+  });
+  assert.equal(
+    (await call('post', `/jobs/${job.id}/actions`, { action: 'resume' })).body.code,
+    'termination_evidence_required',
+  );
+  const evidence = 'Verified that the previous runtime is terminated';
+  assert.equal(
+    (
+      await call('post', `/jobs/${job.id}/actions`, {
+        action: 'resume',
+        termination_evidence: evidence,
+      })
+    ).body.code,
+    'resume_checkpoint_missing',
+  );
+  assert.equal((await db.get('attempts', assignment.attempt_id))!.status, 'running'); // rollback
+  const source = await upload(
+    'checkpoint',
+    Buffer.from('resume snapshot'),
+    job,
+    assignment.attempt_id,
+    undefined,
+    { resume_format: 'grt.resume/1', step: 1 },
+  );
+  await system.background.tick();
+  assert.equal(
+    (await call('post', `/jobs/${job.id}/actions`, { action: 'resume' }, read)).status,
+    403,
+  );
+  const queued = await call('post', `/jobs/${job.id}/actions`, {
+    action: 'resume',
+    termination_evidence: evidence,
+  });
+  assert.equal(queued.body.resume_artifact_id, source.id);
+  await call('patch', `/jobs/${job.id}`, { priority: 10000 });
+  const next = await call('post', `/workers/${worker.id}/claim`, { queue: queue.name });
+  assert.equal(next.body.resume_mode, 'checkpoint');
+  assert.deepEqual(next.body.resume_artifact_ids, [source.id]);
+  const renewed = next.body;
+  for (const step of [2, 3]) {
+    await upload(
+      'checkpoint',
+      Buffer.from('snapshot-' + step),
+      job,
+      renewed.attempt_id,
+      undefined,
+      { resume_format: 'grt.resume/1', step },
+    );
+    await system.background.tick();
+  }
+  assert.equal((await db.get('artifacts', source.id))!.status, 'verified'); // source pinned by running resume
+  const complete = await call('post', `/attempts/${renewed.attempt_id}/finish`, {
+    ...lease(renewed, worker),
+    outcome: 'interrupted',
+    stage: 'training',
+    artifact_ids: [],
+    manifest: {
+      spec_sha256: job.spec_sha256,
+      config_sha256: hash('unused'),
+      completed_steps: 3,
+      target_steps: 100,
+      posthoc_completed: false,
+    },
+  });
+  assert.equal(complete.status, 202);
+  await system.background.tick();
+  assert.equal((await db.get('artifacts', source.id))!.status, 'purged');
+  await assert.rejects(readFile(system.storage.localPath(source.id)), { code: 'ENOENT' });
+  const fresh = await call('post', `/jobs/${job.id}/actions`, { action: 'retry' });
+  assert.equal(fresh.body.resume_artifact_id, null);
+  const freshClaim = await call('post', `/workers/${worker.id}/claim`, { queue: queue.name });
+  assert.equal(freshClaim.body.resume_mode, 'fresh');
+  assert.deepEqual(freshClaim.body.resume_artifact_ids, []);
 });

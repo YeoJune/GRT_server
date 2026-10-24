@@ -38,7 +38,7 @@ Finish는 generation과 필수 파일 ID·manifest를 고정하고 202를 반환
 
 `generic/1`은 config 파일의 hash·resolved spec 필드 일치, provenance의 spec/config/runner, report schema·spec hash·완료 step, 필수 posthoc 선언을 검증합니다. `spec.target_steps`는 양의 정수여야 합니다. 과학적 학습 결과의 진실성이나 GRT budget/world size 의미까지 증명하는 검증기가 아닙니다. 전용 runner를 추가하기 전 `grt/1`은 거부합니다.
 
-Retry는 불변 spec의 새 attempt를 대기열에 넣고, 다음 claim에서 generation을 증가시킵니다. 기존 checkpoint는 조회·다운로드할 수 있지만 자동 학습 복원은 하지 않습니다. 연결과 secret 설정은 spec·결과에 포함하지 마세요.
+Retry는 불변 spec의 fresh attempt를 대기열에 넣습니다. Resume은 같은 실험의 verified `grt.resume/1` snapshot ID를 연결하고 다음 claim에서 generation을 증가시킵니다. GRT worker가 명시적으로 요청한 복원을 실행하며 원본 attempt·파일은 보존합니다. 연결과 secret 설정은 spec·결과에 포함하지 마세요.
 
 ## 파일·비동기 작업
 
@@ -56,4 +56,6 @@ Export는 요청 시 verified artifact ID/hash/version 집합을 고정합니다
 
 ## 실행기와 구현 범위
 
-GRT 공통 helper는 `generic/1`과 불변 schema로 upload/queue 연결을 제공하며 실제 연구 Config·원본 결과와 서버 검증용 envelope를 구분합니다. 임대 비용이 발생하는 Vast 조작, 독립 과금 감시, 서버 checkpoint 자동 복원, 보관 정책에 따른 자동 삭제와 GRT 과학적 완료 검증은 미지원이며 capabilities에 공개합니다. 실행기 사용법은 [GRT 서버 연결](https://github.com/YeoJune/GRT/blob/main/docs/server.md)을 따릅니다.
+GRT 공통 helper는 `generic/1`과 불변 schema로 upload/queue 연결을 제공하며 실제 연구 Config·원본 결과와 서버 검증용 envelope를 구분합니다. 임대 비용이 발생하는 Vast 조작, 독립 과금 감시, 임의 checkpoint 복원, 보관 정책에 따른 자동 삭제와 GRT 과학적 완료 검증은 미지원이며 capabilities에 공개합니다. 실행기 사용법은 [GRT 서버 연결](https://github.com/YeoJune/GRT/blob/main/docs/server.md)을 따릅니다.
+
+재개 ZIP에는 현재 학습 state·best·실제 Config·배치 보정·metrics·W&B ID만 담고 secret/lease는 넣지 않습니다. 서버는 snapshot 최근 2개와 활성 재개의 원본을 보존하며 나머지는 retired 상태를 저장한 뒤 bytes를 삭제하고 purged 이력을 유지합니다. 삭제 실패·재시작은 DB 기록으로 재시도하며 preparing ZIP에 필요한 파일은 기다립니다.

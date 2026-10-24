@@ -144,6 +144,7 @@ export async function assign(tx: Store, job: RecordData, worker: RecordData, c: 
     summary: {},
     last_verified_checkpoint_id: null,
     finish: null,
+    resume_artifact_id: job.resume_artifact_id ?? null,
   });
   const updated = await tx.put('jobs', {
     ...job,
@@ -160,8 +161,8 @@ export async function assign(tx: Store, job: RecordData, worker: RecordData, c: 
     generation: attempt.generation,
     lease_expires_at: attempt.lease_expires_at,
     deadline_at,
-    resume_artifact_ids: [],
-    resume_mode: 'fresh',
+    resume_artifact_ids: job.resume_artifact_id ? [job.resume_artifact_id] : [],
+    resume_mode: job.resume_artifact_id ? 'checkpoint' : 'fresh',
     heartbeat_seconds: c.HEARTBEAT_SECONDS,
   };
 }

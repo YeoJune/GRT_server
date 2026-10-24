@@ -144,9 +144,10 @@ try {
         'Permanent deletion removes experiment data and result files. Use jobs delete ID --yes',
       );
     result = await request(`/jobs/${encodeURIComponent(subject)}`, 'DELETE');
-  } else if (resource === 'jobs' && ['cancel', 'retry', 'clone'].includes(command))
+  } else if (resource === 'jobs' && ['cancel', 'retry', 'resume', 'clone'].includes(command))
     result = await request(`/jobs/${encodeURIComponent(subject)}/actions`, 'POST', {
       action: command,
+      ...(option('--checkpoint') ? { checkpoint_artifact_id: option('--checkpoint') } : {}),
       ...(option('--evidence') ? { termination_evidence: option('--evidence') } : {}),
     });
   else if (resource === 'queues' && command === 'create')
@@ -158,6 +159,7 @@ try {
   } else if (resource === 'workers' && ['drain', 'resume'].includes(command))
     result = await request(`/workers/${encodeURIComponent(subject)}/actions`, 'POST', {
       action: command,
+      ...(option('--checkpoint') ? { checkpoint_artifact_id: option('--checkpoint') } : {}),
     });
   else if (resource === 'schemas' && command === 'register')
     result = await request('/schemas', 'POST', JSON.parse(await readFile(subject, 'utf8')));
@@ -184,7 +186,7 @@ try {
     delete result.token;
   } else
     throw new Error(
-      'Commands: me; jobs submit|validate|batch FILE, list [--queue NAME], get|cancel|retry|clone ID, update ID --file metadata.json, delete ID --yes; queues create|pause|resume NAME; workers drain|resume ID; schemas register FILE; results collect [--campaign NAME] [--new] [--output DIR]; exports create --jobs ID,ID; exports get ID; requests get ID; tokens create --kind read-only --expires-at ISO',
+      'Commands: me; jobs submit|validate|batch FILE, list [--queue NAME], get|cancel|retry|resume|clone ID, update ID --file metadata.json, delete ID --yes; queues create|pause|resume NAME; workers drain|resume ID; schemas register FILE; results collect [--campaign NAME] [--new] [--output DIR]; exports create --jobs ID,ID; exports get ID; requests get ID; tokens create --kind read-only --expires-at ISO',
     );
   if (result?.csrf_token) delete result.csrf_token;
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);

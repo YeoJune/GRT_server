@@ -117,6 +117,17 @@ unset GRT_SERVER_TOKEN
 
 Windows에서는 WSL을 사용하거나 가상환경에서 같은 Python 명령을 실행하고 비밀값을 환경으로 주입합니다. CPU 기능 검사는 `--runtime cpu --device cpu`를 사용하며 제출한 작업도 CPU 호환 조건이어야 합니다. 데스크톱도 실제 사용 가능 종료 시각을 지정합니다. Worker는 임의 shell이나 코드를 서버에서 내려받지 않습니다.
 
+## Kaggle/Colab 중단 후 재개
+
+1. 이전 런타임의 종료를 확인합니다. Stale running이면 lease 만료도 기다립니다.
+2. 웹 실험의 **이어서 학습**을 선택합니다. Stale 상세에서는 종료 근거를 입력합니다. CLI는 `npm run cli -- jobs resume JOB_ID --evidence '이전 런타임이 종료된 것을 확인했습니다'`입니다. 종료 처리된 interrupted/failed/cancelled에는 evidence를 생략할 수 있습니다.
+3. 같은 GRT commit·소스·prepared 데이터·world size의 새 런타임에서 큐 worker를 실행합니다. 데이터 다운로드를 원하면 `--prepared-from-server`를 선택합니다.
+4. Worker가 snapshot의 설정·데이터·last/best 관계를 검사하고 preflight 단계에서 학습 상태를 복원합니다. 기존 microbatch·accumulation과 W&B run ID도 유지하며 새 attempt에 이력을 남깁니다.
+
+복원 가능한 것은 이 기능으로 업로드·검증한 resume snapshot입니다. 기존 raw checkpoint만 있는 작업은 명확한 오류로 거부합니다. Last/best·optimizer·scheduler·rank별 RNG·stream 위치·메모리 state를 보존합니다. 재개 snapshot은 최근 2개와 현재 재개 원본을 유지해 디스크 누적을 제한하며 일반 최종 결과는 보존합니다. 원래 배치가 들어가는 GPU 환경을 사용하세요. 서버에 저장된 이후 진행분·실제 강제 종료·다른 GPU/라이브러리의 수치 동등성은 별도 범위입니다.
+
+처음부터 다시 실행하려면 **처음부터 재시도**를 선택합니다. 서버가 새 Colab/Kaggle 세션을 시작하지 않으므로 새 worker 실행은 사용자가 수행합니다.
+
 ## 결과 받기
 
 웹 실험 상세에서 개별 원본을 받거나 결과 화면에서 실험을 선택해 ZIP을 요청합니다. ZIP은 `ready`가 된 후 다운로드하세요. 실패하면 상세 오류를 확인하고 ZIP만 다시 요청합니다.

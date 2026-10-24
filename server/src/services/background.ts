@@ -50,8 +50,80 @@ export class Background {
       await this.finalize(a);
     for (const e of (await this.db.list('exports')).filter((e) => e.status === 'preparing'))
       await this.export(e);
+    await this.retireResumeSnapshots();
     for (const job of (await this.db.list('jobs')).filter((j) => j.status === 'deleting'))
       await this.deleteJob(job);
+  }
+  private async retireResumeSnapshots() {
+    const artifacts = await this.db.list('artifacts');
+    const jobs = await this.db.list('jobs');
+    const pinned = new Set(
+      jobs
+        .filter((j) => ['queued', 'running', 'finalizing'].includes(j.status))
+        .map((j) => j.resume_artifact_id),
+    );
+    for (const job of jobs) {
+      const snapshots = artifacts
+        .filter(
+          (a) =>
+            a.job_id === job.id &&
+            a.status === 'verified' &&
+            a.extensions?.resume_format === 'grt.resume/1',
+        )
+        .sort((a, b) => b.created_at.localeCompare(a.created_at) || b.id.localeCompare(a.id));
+      for (const old of snapshots.slice(2).filter((a) => !pinned.has(a.id)))
+        await this.db.write(async (tx) => {
+          const current = await tx.get('artifacts', old.id);
+          const owner = await tx.get('jobs', old.job_id);
+          if (
+            current?.status === 'verified' &&
+            !(
+              owner?.resume_artifact_id === old.id &&
+              ['queued', 'running', 'finalizing'].includes(owner.status)
+            )
+          )
+            await tx.put('artifacts', {
+              ...current,
+              status: 'retired',
+              delete_after: new Date(
+                Date.now() +
+                  (this.storage.config.STORAGE_DRIVER === 's3'
+                    ? this.storage.config.SIGNED_URL_SECONDS * 1000
+                    : 0),
+              ).toISOString(),
+            });
+        });
+    }
+    const exports = await this.db.list('exports');
+    for (const old of (await this.db.list('artifacts')).filter((a) => a.status === 'retired')) {
+      if (
+        Date.parse(old.delete_after) > Date.now() ||
+        Date.parse(old.delete_retry_at) > Date.now() ||
+        this.storage.receiving.has(old.id) ||
+        exports.some(
+          (e) => e.status === 'preparing' && e.artifacts.some((a: any) => a.id === old.id),
+        )
+      )
+        continue;
+      try {
+        await this.storage.remove(old);
+        await this.db.write(async (tx) => {
+          const current = await tx.get('artifacts', old.id);
+          if (current?.status === 'retired')
+            await tx.put('artifacts', { ...current, status: 'purged', error: null });
+        });
+      } catch (error) {
+        await this.db.write(async (tx) => {
+          const current = await tx.get('artifacts', old.id);
+          if (current?.status === 'retired')
+            await tx.put('artifacts', {
+              ...current,
+              error: this.safeError(error),
+              delete_retry_at: new Date(Date.now() + 30000).toISOString(),
+            });
+        });
+      }
+    }
   }
   private async deleteJob(job: RecordData) {
     if (Date.parse(job.delete_after) > Date.now() || Date.parse(job.delete_retry_at) > Date.now())

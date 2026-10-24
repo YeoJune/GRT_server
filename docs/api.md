@@ -74,11 +74,13 @@ Cookie 세션은 기본 절대 8시간 / idle 30분입니다. Token session은 �
 | `GET /jobs/{id}`          | attempts / artifacts / summary 포함, lease hash 제외                                                  |
 | `PATCH /jobs/{id}`        | `{name?,campaign?,wandb_url?,queue?,priority?}`. campaign:null로 해제, queue/priority는 queued만 허용 |
 | `DELETE /jobs/{id}`       | write·멱등 키 필수. 정보·이력·파일·관련 ZIP 영구 삭제, 202 deleting / 없는 ID는 204                   |
-| `POST /jobs/{id}/actions` | `{action:"cancel"\|"retry"\|"clone",termination_evidence?,overrides?}`                                |
+| `POST /jobs/{id}/actions` | `{action:"cancel"\|"retry"\|"resume"\|"clone",termination_evidence?,overrides?}`                      |
 
 W&B 링크는 `summary.wandb_url`에 저장하며 HTTPS `wandb.ai` URL을 사용합니다. 실험 수정으로 기존 실행의 링크도 등록·해제할 수 있습니다. GRT는 online run 링크를 heartbeat와 완료 시 자동 전송합니다.
 
-Queued 취소는 즉시 cancelled, running 취소는 cancel_requested만 기록합니다. Stale running retry는 lease 만료와 10자 이상 종료 근거가 필요합니다. 근거는 사람이 이전 process/runtime 종료를 확인한 기록입니다. 서버가 단순 timeout을 종료 증거로 간주하지 않습니다. Failed/interrupted/cancelled는 이미 finish되었으므로 별도 근거 없이 retry할 수 있습니다. Clone은 새로운 job을 만들며 overrides는 다시 schema 검증합니다.
+Queued 취소는 즉시 cancelled, running 취소는 cancel_requested만 기록합니다. Stale running retry는 lease 만료와 10자 이상 종료 근거가 필요합니다. 근거는 사람이 이전 process/runtime 종료를 확인한 기록입니다. 서버가 단순 timeout을 종료 증거로 간주하지 않습니다. Failed/interrupted/cancelled는 이미 finish되었으므로 별도 근거 없이 retry할 수 있습니다. Resume은 `grt.resume/1`의 같은 job·verified snapshot을 선택해 새 attempt에 연결합니다. `checkpoint_artifact_id`로 지정하거나 최신 보존 snapshot을 선택합니다. 없으면 409 resume_checkpoint_missing입니다. Stale running의 lease·종료 근거 검사는 retry와 같습니다. Claim의 resume_mode=checkpoint, resume_artifact_ids를 사용하고 worker가 Config·manifest·world size·last/best 관계를 확인합니다. Resume 후 각 attempt에 원본 artifact ID를 보존합니다.
+
+Clone은 새로운 job을 만들며 overrides는 다시 schema 검증합니다.
 
 삭제는 running/finalizing이면 409 `job_active`, 관련 ZIP이 preparing이면 409 `export_busy`입니다. 취소·종료 또는 ZIP 완료 후 새 키로 요청하세요. 접수 즉시 API 파일 접근과 수정·재실행을 차단하고, 비동기 정리 후 GET은 404가 됩니다. `deletion_error`가 있으면 자동 재시도하며 새 DELETE 키로 즉시 재시도를 요청할 수 있습니다. S3는 기존 서명 URL 유효기간만큼 대기합니다. 감사 로그와 중복 방지용 최소 기록, 공유 dataset은 유지합니다. 다중 실험 ZIP은 통째로 삭제하며 다른 실험 원본은 유지합니다.
 
@@ -238,6 +240,7 @@ npm run cli -- jobs list --queue research --json
 npm run cli -- jobs update job_123 --file metadata.json
 npm run cli -- jobs delete job_123 --yes
 npm run cli -- jobs clone job_123
+npm run cli -- jobs resume job_123 --checkpoint art_123
 npm run cli -- jobs retry job_123 --evidence "이전 runtime 종료를 확인했습니다"
 npm run cli -- queues pause research
 npm run cli -- workers drain worker_123
@@ -251,3 +254,5 @@ npm run cli -- tokens create --name codex --kind read-only --expires-at 2030-01-
 CLI는 기본 JSON을 출력하며 `--json`을 지원합니다. Token 발급 원문은 interactive terminal에서 한 번만 표시하므로 출력 redirect는 거부합니다. `results collect --new`는 기존 로컬 파일의 SHA256까지 확인하고 일치할 때만 건너뜁니다. 파일명은 artifact ID/hash로 정해 원본 파일명 충돌을 피하고 metadata를 별도 JSON으로 저장합니다.
 
 특정 작업 재시도에 같은 키를 사용하려면 `GRT_REQUEST_ID` 환경변수를 고정합니다. 다른 명령에 같은 키를 재사용하면 409이므로 작업 단위로 설정하세요. 내장 shell·SSH·임의 Python 실행은 제공하지 않습니다. 브라우저는 GUI를 통해 동일 API를 사용하며 텍스트 명령 콘솔은 별도로 제공하지 않습니다.
+
+재개용 snapshot은 최근 2개와 현재 배정·실행에 필요한 원본을 보존합니다. 나머지는 retired → purged로 bytes를 제거하며 metadata는 유지합니다. S3 URL 대기·파일 삭제 재시도를 적용하고 preparing ZIP이 원본을 읽는 동안은 정리를 기다립니다. 이 규칙은 snapshot 전용이며 일반 결과의 기간별 자동 삭제는 제공하지 않습니다.

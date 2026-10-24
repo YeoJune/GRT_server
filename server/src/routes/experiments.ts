@@ -29,6 +29,7 @@ export function experimentRoutes(db: Database, c: Config) {
         artifact_bytes: c.MAX_ARTIFACT_BYTES,
         export_bytes: c.MAX_EXPORT_BYTES,
         batch_jobs: 50,
+        resume_snapshots_per_job: 2,
       },
       heartbeat_seconds: c.HEARTBEAT_SECONDS,
       lease_seconds: c.LEASE_SECONDS,
@@ -41,7 +42,7 @@ export function experimentRoutes(db: Database, c: Config) {
         notebook_helper: true,
         automatic_retention: false,
         grt_scientific_validation: false,
-        training_resume: false,
+        training_resume: true,
         experiment_deletion: true,
         prepared_cache: true,
       },
@@ -171,7 +172,7 @@ export function experimentRoutes(db: Database, c: Config) {
         )
         .map((w) => w.id),
       warnings: [
-        'generic/1 validates structure and completion evidence; GRT scientific validation and checkpoint restore require a runner adapter.',
+        'generic/1 validates completion evidence; GRT workers restore only verified GRT resume snapshots.',
       ],
     });
   });
@@ -242,10 +243,14 @@ export function experimentRoutes(db: Database, c: Config) {
           .string()
           .url()
           .refine((v) => {
-            const u = new URL(v);
-            return (
-              u.protocol === 'https:' && u.hostname === 'wandb.ai' && !u.username && !u.password
-            );
+            try {
+              const u = new URL(v);
+              return (
+                u.protocol === 'https:' && u.hostname === 'wandb.ai' && !u.username && !u.password
+              );
+            } catch {
+              return false;
+            }
           }, 'Use an HTTPS wandb.ai run URL')
           .nullable()
           .optional(),
@@ -340,7 +345,8 @@ export function experimentRoutes(db: Database, c: Config) {
   r.post('/jobs/:id/actions', writeOnly, async (req, res) => {
     const input = z
       .object({
-        action: z.enum(['cancel', 'retry', 'clone']),
+        action: z.enum(['cancel', 'retry', 'resume', 'clone']),
+        checkpoint_artifact_id: z.string().optional(),
         termination_evidence: z.string().min(10).max(4000).optional(),
         overrides: object.optional(),
       })
@@ -418,7 +424,28 @@ export function experimentRoutes(db: Database, c: Config) {
           const worker = await tx.get('workers', a.worker_id);
           if (worker) await tx.put('workers', { ...worker, active_attempt_id: null });
         }
-        await audit(tx, req, 'job.retry', {
+        let checkpoint: any = null;
+        if (input.action === 'resume') {
+          checkpoint = (await tx.list('artifacts'))
+            .filter(
+              (a) =>
+                a.job_id === job.id &&
+                a.kind === 'checkpoint' &&
+                a.status === 'verified' &&
+                a.extensions?.resume_format === 'grt.resume/1' &&
+                (!input.checkpoint_artifact_id || a.id === input.checkpoint_artifact_id),
+            )
+            .sort(
+              (a, b) => b.created_at.localeCompare(a.created_at) || b.id.localeCompare(a.id),
+            )[0];
+          assert(
+            checkpoint,
+            409,
+            'resume_checkpoint_missing',
+            'A verified GRT resume snapshot is required',
+          );
+        }
+        await audit(tx, req, `job.${input.action}`, {
           job_id: job.id,
           termination_evidence: input.termination_evidence || 'previous finish confirmed',
         });
@@ -426,6 +453,7 @@ export function experimentRoutes(db: Database, c: Config) {
           body: await tx.put('jobs', {
             ...job,
             dispatch: 'queued',
+            resume_artifact_id: checkpoint?.id ?? null,
             worker_id: undefined,
             status: 'queued',
             cancel_requested: false,

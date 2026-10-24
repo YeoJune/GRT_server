@@ -43,12 +43,13 @@ GRT에서 `server_mode='upload'`를 선택하면 기존 notebook 실험의 상�
 - `write` / `read-only` 권한, 토큰 발급·만료·폐기, 감사 로그
 - 불변 schema·spec, 원자적 batch 등록, 재요청 중복 방지
 - 우선순위 큐·pause/resume·worker drain, 호환 조건·deadline 검사, 원자적 claim
+- prepared 공유 캐시·선택 다운로드, GRT snapshot을 통한 환경 간 학습 재개
 - attached 실행, heartbeat·lease·generation, 취소 전달과 종료 근거를 남기는 stale 복구
 - 실험 이름·Campaign 관리, 대기열·우선순위 수정, 종료된 실험·결과 파일 영구 삭제
 - 크기·SHA256 검증, 원본 보관, 개별 다운로드·비동기 ZIP·CLI 결과 수집
 - SQLite 또는 PostgreSQL, 로컬 파일 또는 S3 저장 어댑터
 
-현재 완료 검증기는 `generic/1`입니다. Config·provenance·report·완료 step을 검증하며, GRT 학습의 과학적 타당성 판정과 서버 checkpoint 자동 복원은 제공하지 않습니다. Retry는 새 attempt의 fresh 실행입니다. `grt/1`은 거부합니다.
+현재 완료 검증기는 `generic/1`입니다. Config·provenance·report·완료 step을 검증하며, GRT 학습의 과학적 타당성 판정과 임의 checkpoint의 자동 복원은 제공하지 않습니다. Retry는 새 attempt의 fresh 실행이며, 이어서 학습은 검증된 GRT resume snapshot으로 새 attempt를 복원합니다. `grt/1`은 거부합니다.
 
 Vast는 키 설정 시 offer 검색만 제공합니다. 유료 임대·start/stop/destroy·enroll, 독립 과금 감시, 보관 정책에 따른 자동 삭제는 미지원입니다. DB·저장 어댑터 설정 변경은 기존 데이터를 자동 이전하지 않습니다.
 

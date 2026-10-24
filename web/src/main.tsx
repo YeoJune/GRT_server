@@ -299,11 +299,18 @@ function App() {
   }
   async function jobAction(job: any, action: string) {
     let termination_evidence: string | undefined;
-    if (action === 'retry' && job.status === 'running') {
+    if (['retry', 'resume'].includes(action) && job.status === 'running') {
       termination_evidence =
         prompt('이전 프로세스가 종료되었다는 근거를 입력하세요 (10자 이상).') || undefined;
       if (!termination_evidence) return;
     }
+    if (
+      action === 'resume' &&
+      !confirm(
+        '검증된 최신 snapshot에서 이어서 학습합니다. 이전 프로세스가 종료되었는지 확인하세요.',
+      )
+    )
+      return;
     if (
       action === 'cancel' &&
       !confirm(`${job.name} 실험을 취소할까요? 실행 중이면 안전 종료 명령을 전달합니다.`)
@@ -695,9 +702,17 @@ function App() {
                           {['failed', 'interrupted', 'cancelled'].includes(j.status) && (
                             <button
                               disabled={!canWrite || busy}
+                              onClick={() => jobAction(j, 'resume')}
+                            >
+                              이어서 학습
+                            </button>
+                          )}
+                          {['failed', 'interrupted', 'cancelled'].includes(j.status) && (
+                            <button
+                              disabled={!canWrite || busy}
                               onClick={() => jobAction(j, 'retry')}
                             >
-                              재시도
+                              처음부터 재시도
                             </button>
                           )}
                         </div>
@@ -1235,6 +1250,11 @@ function App() {
             {detail.status === 'running' && (
               <button disabled={!canWrite || busy} onClick={() => jobAction(detail, 'retry')}>
                 Stale 복구 · 종료 근거 기록
+              </button>
+            )}
+            {detail.status === 'running' && (
+              <button disabled={!canWrite || busy} onClick={() => jobAction(detail, 'resume')}>
+                Stale 실행 이어서 학습
               </button>
             )}
             <h3>결과·로그 파일</h3>
