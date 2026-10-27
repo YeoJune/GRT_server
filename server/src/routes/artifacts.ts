@@ -38,7 +38,7 @@ export function artifactRoutes(db: Database, c: Config, storage: Storage) {
       sha256: z.string().regex(/^[a-f0-9]{64}$/),
       format: name,
       format_version: name,
-      extensions: z.record(z.unknown()).default({}),
+      extensions: z.record(z.string(), z.unknown()).default({}),
     })
     .strict();
   r.post('/artifacts/uploads', writeOnly, async (req, res) => {

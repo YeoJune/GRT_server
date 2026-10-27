@@ -8,7 +8,7 @@ export function providerRoutes(c: Config) {
   const r = Router();
   r.post('/providers/vast/offers/search', async (req, res) => {
     const query = z
-      .object({ query: z.record(z.unknown()) })
+      .object({ query: z.record(z.string(), z.unknown()) })
       .strict()
       .parse(req.body);
     assert(

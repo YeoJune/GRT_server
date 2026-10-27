@@ -1,5 +1,5 @@
 import { z } from 'zod';
-export const object = z.record(z.unknown());
+export const object = z.record(z.string(), z.unknown());
 export const time = z
   .string()
   .datetime({ offset: true })
@@ -35,7 +35,7 @@ export const jobInput = z
       })
       .strict()
       .default({}),
-    labels: z.record(z.string()).default({}),
+    labels: z.record(z.string(), z.string()).default({}),
     extensions: object.default({}),
   })
   .strict();
