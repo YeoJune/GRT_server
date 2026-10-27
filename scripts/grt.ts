@@ -116,6 +116,7 @@ async function collect() {
 try {
   let result: any;
   if (resource === 'me') result = await request('/me');
+  else if (resource === 'storage' && command === 'usage') result = await request('/storage/usage');
   else if (resource === 'jobs' && ['submit', 'validate', 'batch'].includes(command)) {
     if (!subject) throw new Error('Provide a JSON file');
     const input = JSON.parse(await readFile(subject, 'utf8'));
@@ -186,7 +187,7 @@ try {
     delete result.token;
   } else
     throw new Error(
-      'Commands: me; jobs submit|validate|batch FILE, list [--queue NAME], get|cancel|retry|resume|clone ID, update ID --file metadata.json, delete ID --yes; queues create|pause|resume NAME; workers drain|resume ID; schemas register FILE; results collect [--campaign NAME] [--new] [--output DIR]; exports create --jobs ID,ID; exports get ID; requests get ID; tokens create --kind read-only --expires-at ISO',
+      'Commands: me; storage usage; jobs submit|validate|batch FILE, list [--queue NAME], get|cancel|retry|resume|clone ID, update ID --file metadata.json, delete ID --yes; queues create|pause|resume NAME; workers drain|resume ID; schemas register FILE; results collect [--campaign NAME] [--new] [--output DIR]; exports create --jobs ID,ID; exports get ID; requests get ID; tokens create --kind read-only --expires-at ISO',
     );
   if (result?.csrf_token) delete result.csrf_token;
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);

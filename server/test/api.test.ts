@@ -197,6 +197,16 @@ test('health, authentication and cookie CSRF', async () => {
   );
 });
 
+test('storage usage requires authentication and permits read-only inspection', async () => {
+  assert.equal((await request(system.app).get('/v1/storage/usage')).status, 401);
+  const response = await call('get', '/storage/usage', undefined, read);
+  assert.equal(response.status, 200);
+  assert.equal(response.body.driver, 'local');
+  assert.deepEqual(response.body.s3, { status: 'disabled' });
+  assert.ok(response.body.disk.filesystems.length > 0);
+  assert.ok(response.body.disk.filesystems.every((d: any) => d.total_bytes > 0));
+});
+
 test('read-only cannot write even through POST actions, but can validate', async () => {
   for (const route of [
     '/tokens',

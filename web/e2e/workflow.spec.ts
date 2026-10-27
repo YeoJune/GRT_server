@@ -1,5 +1,70 @@
 import { test, expect } from '@playwright/test';
 
+test('storage shows S3 versions, the soft budget, disk capacity and lookup failures on mobile', async ({
+  page,
+}) => {
+  let unavailable = false;
+  await page.route('**/v1/storage/usage', (route) =>
+    route.fulfill({
+      json: {
+        driver: 's3',
+        s3: unavailable
+          ? {
+              status: 'error',
+              bucket: 'grt-research-test',
+              prefix: 'grt/',
+              checked_at: new Date().toISOString(),
+              message: 'S3 사용량을 조회하지 못했습니다.',
+            }
+          : {
+              status: 'ok',
+              bucket: 'grt-research-test',
+              prefix: 'grt/',
+              budget_bytes: 1000000000000,
+              used_bytes: 1100000000000,
+              current_bytes: 1000000000000,
+              noncurrent_bytes: 100000000000,
+              object_count: 12,
+              version_count: 14,
+              checked_at: new Date().toISOString(),
+            },
+        disk: {
+          filesystems: [
+            {
+              paths: ['/home/ec2-user/GRT_server', '/tmp'],
+              total_bytes: 20000000000,
+              used_bytes: 5000000000,
+              available_bytes: 14000000000,
+            },
+          ],
+          errors: [],
+          checked_at: new Date().toISOString(),
+        },
+      },
+    }),
+  );
+  await page.setViewportSize({ width: 320, height: 844 });
+  await page.goto('/');
+  await page.getByLabel('계정', { exact: true }).fill('owner');
+  await page.getByLabel('비밀번호', { exact: true }).fill('browser-test-password-123');
+  await page.getByRole('button', { name: '로그인', exact: true }).click();
+  await page.getByRole('button', { name: '설정', exact: true }).click();
+  const storage = page.getByRole('region', { name: '저장공간', exact: true });
+  await expect(storage).toContainText('1.10 TB');
+  await expect(storage).toContainText('이전 버전 100.00 GB');
+  await expect(storage).toContainText('관리 기준에 도달');
+  await expect(storage).toContainText('여유 공간 14.00 GB');
+  await expect(storage.getByRole('meter', { name: 'S3 사용량', exact: true })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
+    true,
+  );
+  unavailable = true;
+  await storage.getByRole('button', { name: '저장공간 새로고침' }).click();
+  await expect(storage.getByRole('alert')).toContainText('조회하지 못했습니다');
+  await expect(storage.getByRole('meter', { name: 'S3 사용량', exact: true })).toHaveCount(0);
+  await expect(storage.getByRole('meter', { name: '디스크 사용량', exact: true })).toBeVisible();
+});
+
 test('owner registers a schema and a queued experiment; read-only session cannot mutate', async ({
   page,
 }) => {
@@ -15,6 +80,9 @@ test('owner registers a schema and a queued experiment; read-only session cannot
   await page.getByRole('button', { name: '+ 큐 만들기' }).click();
   await expect(page.getByRole('heading', { name: 'research active' })).toBeVisible();
   await page.getByRole('button', { name: '설정', exact: true }).click();
+  await expect(page.getByRole('region', { name: '저장공간', exact: true })).toBeVisible();
+  await expect(page.getByRole('meter', { name: '디스크 사용량' }).first()).toBeVisible();
+  await expect(page.getByText('S3가 연결되지 않았습니다.')).toBeVisible();
   await expect(page.getByLabel('Checkpoint 보관 일수')).toHaveCount(0);
   await expect(page.getByLabel('결과 보관 일수')).toHaveCount(0);
   await page.getByLabel('최대 실행 시간 (초)').fill('7200');

@@ -48,18 +48,23 @@ Cookie 세션은 기본 절대 8시간 / idle 30분입니다. Token session은 �
 
 ## 설정 / Schema / 큐
 
-| 경로                                 | 본문 / 의미                                                                               |
-| ------------------------------------ | ----------------------------------------------------------------------------------------- |
-| `GET /capabilities`                  | 기능·한도·heartbeat·lease·저장소 종류                                                     |
-| `GET/PATCH /settings`                | `max_attempt_seconds,upload_margin_seconds`. PATCH는 일부 필드만 가능                     |
-| `GET /schemas` / `GET /schemas/{id}` | 불변 schema 조회                                                                          |
-| `POST /schemas`                      | `{id,name,runner,json_schema,report_schema,extensions?}`. [예제](../examples/schema.json) |
-| `GET/POST /queues`                   | 생성 `{name}`                                                                             |
-| `POST /queues/{id}/actions`          | `{action:"pause"\|"resume"}`                                                              |
+| 경로                                 | 본문 / 의미                                                                                |
+| ------------------------------------ | ------------------------------------------------------------------------------------------ |
+| `GET /capabilities`                  | 기능·한도·heartbeat·lease·저장소 종류                                                      |
+| `GET/PATCH /settings`                | `max_attempt_seconds,upload_margin_seconds`. PATCH는 일부 필드만 가능                      |
+| `GET /storage/usage`                 | 인증된 조회. 저장소 종류, S3 경로의 전체 버전 데이터량·1TB 관리 기준, 서버 파일시스템 용량 |
+| `GET /schemas` / `GET /schemas/{id}` | 불변 schema 조회                                                                           |
+| `POST /schemas`                      | `{id,name,runner,json_schema,report_schema,extensions?}`. [예제](../examples/schema.json)  |
+| `GET/POST /queues`                   | 생성 `{name}`                                                                              |
+| `POST /queues/{id}/actions`          | `{action:"pause"\|"resume"}`                                                               |
 
 현재 실행 adapter는 `generic/1`만 지원합니다. JSON Schema draft-07 strict mode를 사용하며 schema의 default를 복제한 spec에 적용합니다. Schema를 나중에 바꾸지 않고 새 ID를 등록합니다. `spec.target_steps`는 양의 정수여야 합니다.
 
 설정은 새 작업에 적용합니다. 자동 삭제와 보관 일수 설정은 제공하지 않으며, 지원하지 않는 설정 필드는 422입니다.
+
+`GET /storage/usage`는 read-only도 허용합니다. `driver`, `s3`, `disk`를 반환합니다. S3는 `status=ok|disabled|error`이며 ok일 때 `used_bytes`(현재+이전 버전), `current_bytes`, `noncurrent_bytes`, `object_count`, `version_count`, `delete_markers`, `budget_bytes`, `checked_at`을 제공합니다. 설정한 bucket/prefix만 집계하며 응답을 최대 5분 재사용합니다. 조회 실패 시 error 상태와 안내를 반환하고 0으로 처리하지 않습니다. `budget_bytes`는 제한·예약 용량이 아닌 관리 기준입니다.
+
+`disk.filesystems[]`는 같은 파일시스템을 합쳐 `paths,total_bytes,used_bytes,available_bytes`를 제공합니다. 코드·DB·파일 저장 경로·OS 임시 경로를 확인하며, 애플리케이션 외의 사용량도 포함합니다. `available_bytes`는 서버 계정이 쓸 수 있는 공간이므로 전체−사용량과 다를 수 있습니다. 조회 불가 경로는 `disk.errors[]`에 남깁니다. S3 version 목록은 순차 집계이므로 업로드·삭제 중의 값은 순간적인 근사치이며, delete marker의 키·부가 메타데이터 비용까지 계산하는 청구 API는 아닙니다.
 
 ## 실험
 
@@ -227,6 +232,8 @@ Provenance JSON:
 ZIP 요청 접수는 생성 성공을 뜻하지 않습니다. `ready`까지 조회하고 `failed`이면 `error`를 확인합니다. 원인을 해결한 뒤 새 Idempotency-Key로 다시 요청하세요. 같은 파일 집합의 preparing/ready ZIP은 재사용하지만 실패한 ZIP은 재사용하지 않습니다. 학습·원본 업로드를 다시 수행할 필요는 없습니다.
 
 ## CLI
+
+연결 URL·토큰을 설정한 뒤 `npm run cli -- storage usage`로 S3와 디스크 사용량을 JSON으로 확인할 수 있습니다.
 
 환경별 준비·관리 예제는 [사용 가이드](environments.md)를 따릅니다. `metadata.json`에는 변경할 name/campaign/wandb_url 또는 대기 작업의 queue/priority만 넣습니다.
 

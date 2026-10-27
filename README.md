@@ -48,6 +48,7 @@ GRT에서 `server_mode='upload'`를 선택하면 기존 notebook 실험의 상�
 - 실험 이름·Campaign 관리, 대기열·우선순위 수정, 종료된 실험·결과 파일 영구 삭제
 - 크기·SHA256 검증, 원본 보관, 개별 다운로드·비동기 ZIP·CLI 결과 수집
 - SQLite 또는 PostgreSQL, 로컬 파일 또는 S3 저장 어댑터
+- 설정 화면의 S3 사용량·서버 디스크 용량 확인, 기존 로컬 파일의 검증된 S3 이전
 
 현재 완료 검증기는 `generic/1`입니다. Config·provenance·report·완료 step을 검증하며, GRT 학습의 과학적 타당성 판정과 임의 checkpoint의 자동 복원은 제공하지 않습니다. Retry는 새 attempt의 fresh 실행이며, 이어서 학습은 검증된 GRT resume snapshot으로 새 attempt를 복원합니다. `grt/1`은 거부합니다.
 
@@ -65,6 +66,8 @@ sh scripts/update.sh
 이전 checkout에 스크립트가 없으면 먼저 `git pull --ff-only origin main`을 한 번 실행합니다.
 
 HTTPS·systemd·업데이트·백업/복원·선택 DB/S3 설정은 [운영 문서](docs/operations.md), 내부 구성은 [구현 구조](docs/architecture.md)에 정리했습니다.
+
+운영 파일은 [S3 설정과 기존 파일 이전](docs/operations.md#s3-설정과-기존-파일-이전) 절차로 S3에 모을 수 있습니다. Prepared·checkpoint·리포트·ZIP을 S3에 저장하고 직접 전송하며, EC2에는 DB·서버 코드·ZIP 임시 파일을 둡니다. 초기 S3 관리 기준은 1TB이며 사전 할당이나 저장 제한은 아닙니다. 사용량은 설정 → 저장공간 또는 `npm run cli -- storage usage`로 확인합니다.
 
 ```bash
 npm run check

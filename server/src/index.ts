@@ -1,10 +1,12 @@
 import { loadConfig } from './config.js';
 import { createDatabase } from './db/index.js';
 import { createApp } from './app.js';
+import { ensureStorage } from './services/storage-migration.js';
 
 const config = loadConfig();
 const db = createDatabase(config);
 await db.migrate();
+await ensureStorage(db, config);
 const { app, background } = createApp(db, config);
 const server = app.listen(config.PORT, config.HOST, () => {
   console.log(`GRT API listening on ${config.HOST}:${config.PORT}`);

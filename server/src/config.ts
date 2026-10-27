@@ -34,6 +34,12 @@ const envSchema = z.object({
   AWS_REGION: z.string().default('ap-northeast-2'),
   S3_BUCKET: z.string().default(''),
   S3_PREFIX: z.string().default('grt/'),
+  S3_BUDGET_BYTES: z.coerce
+    .number()
+    .int()
+    .positive()
+    .max(Number.MAX_SAFE_INTEGER)
+    .default(1000000000000),
   VAST_API_KEY: z.string().default(''),
 });
 export type Config = z.infer<typeof envSchema>;

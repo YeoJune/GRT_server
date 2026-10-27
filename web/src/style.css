@@ -14,6 +14,22 @@
 * {
   box-sizing: border-box;
 }
+.storage-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
+  gap: 24px;
+}
+.storage-grid > div {
+  min-width: 0;
+}
+.storage-path {
+  overflow-wrap: anywhere;
+}
+.storage-grid meter {
+  display: block;
+  width: 100%;
+  height: 16px;
+}
 body {
   margin: 0;
 }

@@ -142,6 +142,123 @@ function Login({ onLogin }: { onLogin: (me: any) => void }) {
     </main>
   );
 }
+function bytes(value: number) {
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let unit = 0;
+  while (value >= 1000 && unit < units.length - 1) {
+    value /= 1000;
+    unit++;
+  }
+  return `${value.toFixed(unit ? 2 : 0)} ${units[unit]}`;
+}
+function StorageUsage() {
+  const [usage, setUsage] = useState<any>();
+  const [error, setError] = useState<unknown>();
+  const [loading, setLoading] = useState(false);
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    setError(undefined);
+    try {
+      setUsage(await api('/storage/usage'));
+    } catch (e) {
+      setError(e);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+  return (
+    <section aria-label="저장공간">
+      <div className="toolbar">
+        <h2>저장공간</h2>
+        <button disabled={loading} onClick={() => void refresh()}>
+          저장공간 새로고침
+        </button>
+      </div>
+      <ErrorBox error={error} />
+      {loading && <p role="status">저장공간 확인 중…</p>}
+      {usage && (
+        <>
+          <p>실험 파일 저장소: {usage.driver === 's3' ? 'Amazon S3' : '서버 디스크'}</p>
+          <div className="storage-grid">
+            <div>
+              <h3>Amazon S3</h3>
+              {usage.s3.status === 'disabled' ? (
+                <p>S3가 연결되지 않았습니다.</p>
+              ) : (
+                <>
+                  <p className="storage-path">
+                    {usage.s3.bucket} / {usage.s3.prefix}
+                  </p>
+                  {usage.s3.status === 'error' ? (
+                    <p role="alert">{usage.s3.message}</p>
+                  ) : (
+                    <>
+                      <p>
+                        <strong>{bytes(usage.s3.used_bytes)}</strong> 사용 / 관리 기준{' '}
+                        {bytes(usage.s3.budget_bytes)}
+                      </p>
+                      <meter
+                        aria-label="S3 사용량"
+                        min={0}
+                        max={usage.s3.budget_bytes}
+                        value={usage.s3.used_bytes}
+                      />
+                      {usage.s3.used_bytes >= usage.s3.budget_bytes && (
+                        <p role="status">S3 관리 기준에 도달했습니다.</p>
+                      )}
+                      <p>
+                        현재 파일 {bytes(usage.s3.current_bytes)} · 이전 버전{' '}
+                        {bytes(usage.s3.noncurrent_bytes)}
+                        <br />
+                        파일 {usage.s3.object_count.toLocaleString()}개 · 전체 버전{' '}
+                        {usage.s3.version_count.toLocaleString()}개
+                      </p>
+                    </>
+                  )}
+                  <p className="muted">확인 {date(usage.s3.checked_at)}</p>
+                  <p className="muted">
+                    설정된 경로의 전체 버전을 집계하며 최대 5분간 재사용합니다. 관리 기준은 용량
+                    제한이 아니며 초과해도 저장과 과금은 계속됩니다.
+                  </p>
+                </>
+              )}
+            </div>
+            <div>
+              <h3>서버 디스크</h3>
+              {usage.disk.filesystems.map((disk: any) => (
+                <div key={disk.paths.join(':')}>
+                  <p>
+                    <strong>{bytes(disk.used_bytes)}</strong> 사용 / 전체 {bytes(disk.total_bytes)}
+                    <br />
+                    서버가 쓸 수 있는 여유 공간 {bytes(disk.available_bytes)}
+                  </p>
+                  <meter
+                    aria-label="디스크 사용량"
+                    min={0}
+                    max={disk.total_bytes || 1}
+                    value={disk.used_bytes}
+                  />
+                  <p className="muted storage-path">{disk.paths.join(' · ')}</p>
+                </div>
+              ))}
+              {usage.disk.errors.length > 0 && (
+                <p role="alert">일부 디스크를 확인하지 못했습니다.</p>
+              )}
+              <p className="muted">
+                확인 {date(usage.disk.checked_at)}
+                <br />
+                파일시스템 전체 사용량입니다. 같은 파일시스템은 한 번만 표시합니다.
+              </p>
+            </div>
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
 function App() {
   const [me, setMe] = useState<any>();
   const [boot, setBoot] = useState(true);
@@ -892,6 +1009,7 @@ function App() {
         )}
         {tab === '설정' && (
           <>
+            <StorageUsage />
             <section>
               <h2>연결 정보</h2>
               <p>

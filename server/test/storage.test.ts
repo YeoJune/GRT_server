@@ -5,6 +5,10 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { loadConfig } from '../src/config.js';
 import { Storage } from '../src/services/storage.js';
+import { diskUsage } from '../src/routes/storage.js';
+import { createDatabase } from '../src/db/index.js';
+import { ensureStorage, migrateToS3 } from '../src/services/storage-migration.js';
+import { hash, now } from '../src/util.js';
 
 test('local exports publish complete immutable bytes, including across filesystems', async () => {
   const source = await mkdtemp(path.join(tmpdir(), 'grt-export-source-'));
@@ -112,4 +116,181 @@ test('S3 deletion removes only the exact key, all versions and markers, and repo
         : { Errors: [{ Code: 'AccessDenied' }] },
   };
   await assert.rejects(storage.remove({ id: 'art_test' }), { code: 'storage_delete_failed' });
+});
+
+test('S3 usage counts all versions across pages, caches scans, and distinguishes failure from zero', async () => {
+  const { ListObjectVersionsCommand } = await import('@aws-sdk/client-s3');
+  const c = loadConfig({
+    STORAGE_DRIVER: 's3',
+    S3_BUCKET: 'usage-test',
+    STORAGE_SIGNING_KEY: 'k'.repeat(32),
+  });
+  const storage = new Storage(c);
+  let calls = 0;
+  (storage as any).s3 = {
+    send: async (command: any) => {
+      assert.ok(command instanceof ListObjectVersionsCommand);
+      assert.equal(command.input.Prefix, 'grt/');
+      calls++;
+      if (calls === 1)
+        return {
+          Versions: [
+            { Size: 5, IsLatest: true },
+            { Size: 7, IsLatest: false },
+          ],
+          IsTruncated: true,
+          NextKeyMarker: 'grt/a',
+          NextVersionIdMarker: 'v2',
+        };
+      assert.equal(command.input.KeyMarker, 'grt/a');
+      assert.equal(command.input.VersionIdMarker, 'v2');
+      return { Versions: [{ Size: 11, IsLatest: true }], DeleteMarkers: [{ Key: 'grt/old' }] };
+    },
+  };
+  const [first, concurrent] = await Promise.all([storage.usage(), storage.usage()]);
+  assert.deepEqual(first, concurrent);
+  assert.deepEqual(await storage.usage(), first);
+  assert.equal(calls, 2);
+  assert.equal((first as any).used_bytes, 23);
+  assert.equal((first as any).current_bytes, 16);
+  assert.equal((first as any).noncurrent_bytes, 7);
+  assert.equal((first as any).object_count, 2);
+  assert.equal((first as any).delete_markers, 1);
+  const broken = new Storage(c);
+  (broken as any).s3 = {
+    send: async () => {
+      throw new Error('sensitive AWS diagnostic');
+    },
+  };
+  const error = (await broken.usage()) as any;
+  assert.equal(error.status, 'error');
+  assert.equal(error.used_bytes, undefined);
+  assert.ok(!JSON.stringify(error).includes('sensitive'));
+  const local = new Storage({ ...c, STORAGE_DRIVER: 'local' });
+  assert.deepEqual(await local.usage(), { status: 'disabled' });
+  const disk = await diskUsage(local.config);
+  assert.equal(disk.errors.length, 0);
+  assert.ok(disk.filesystems.length > 0);
+  assert.ok(disk.filesystems.every((d) => d.total_bytes >= d.used_bytes && d.available_bytes >= 0));
+});
+
+test('offline S3 migration verifies bytes, commits locations atomically, retries copies and keeps originals', async () => {
+  const { ListObjectVersionsCommand, GetObjectCommand, PutObjectCommand } =
+    await import('@aws-sdk/client-s3');
+  const { Readable } = await import('node:stream');
+  const directory = await mkdtemp(path.join(tmpdir(), 'grt-s3-migration-'));
+  const c = loadConfig({
+    NODE_ENV: 'test',
+    SQLITE_FILENAME: path.join(directory, 'db.sqlite'),
+    STORAGE_DIRECTORY: directory,
+    STORAGE_SIGNING_KEY: 'k'.repeat(32),
+  });
+  const db = createDatabase(c);
+  const source = new Storage(c);
+  const destination = new Storage({ ...c, STORAGE_DRIVER: 's3', S3_BUCKET: 'migration-test' });
+  const objects = new Map<string, { version: string; data: Buffer }>();
+  let failKey = 'grt/exp_test',
+    writes = 0;
+  (destination as any).s3 = {
+    send: async (command: any) => {
+      const key = command.input.Key || command.input.Prefix;
+      if (command instanceof ListObjectVersionsCommand) {
+        const object = objects.get(key);
+        return {
+          Versions: object ? [{ Key: key, VersionId: object.version, IsLatest: true }] : [],
+        };
+      }
+      if (command instanceof PutObjectCommand) {
+        if (key === failKey) throw new Error('simulated upload failure');
+        const chunks = [];
+        for await (const chunk of command.input.Body) chunks.push(Buffer.from(chunk));
+        const object = { version: `s3-version-${++writes}`, data: Buffer.concat(chunks) };
+        objects.set(key, object);
+        return { VersionId: object.version };
+      }
+      assert.ok(command instanceof GetObjectCommand);
+      const object = objects.get(key)!;
+      assert.equal(command.input.VersionId, object.version);
+      return { Body: Readable.from([object.data]) };
+    },
+  };
+  try {
+    await db.migrate();
+    const file = Buffer.from('original prepared/checkpoint bytes');
+    const zip = Buffer.from('original ZIP and historical manifest bytes');
+    await writeFile(source.localPath('art_test'), file);
+    await writeFile(source.localPath('exp_test'), zip);
+    await db.write(async (tx) => {
+      await tx.put('artifacts', {
+        id: 'art_test',
+        created_at: now(),
+        status: 'verified',
+        object_version: 'local-immutable-v1',
+        sha256: hash(file),
+        size_bytes: file.length,
+      });
+      await tx.put('exports', {
+        id: 'exp_test',
+        created_at: now(),
+        status: 'ready',
+        object_version: 'local-immutable-v1',
+        sha256: hash(zip),
+        size_bytes: zip.length,
+        artifacts: [{ id: 'art_test', object_version: 'local-immutable-v1' }],
+      });
+      await tx.put('jobs', { id: 'job_test', created_at: now(), status: 'running' });
+    });
+    await ensureStorage(db, c);
+    await assert.rejects(migrateToS3(db, source, destination), { code: 'storage_busy' });
+    assert.equal(writes, 0);
+    await db.write(async (tx) => {
+      await tx.put('jobs', { ...(await tx.get('jobs', 'job_test'))!, status: 'succeeded' });
+    });
+    await assert.rejects(ensureStorage(db, destination.config), {
+      code: 'storage_location_changed',
+    });
+    await writeFile(source.localPath('art_test'), 'corrupt source');
+    await assert.rejects(migrateToS3(db, source, destination), { code: 'source_hash_mismatch' });
+    assert.equal(writes, 0);
+    await writeFile(source.localPath('art_test'), file);
+    await assert.rejects(migrateToS3(db, source, destination), /simulated upload failure/);
+    assert.equal((await db.get('artifacts', 'art_test'))!.object_version, 'local-immutable-v1');
+    assert.equal(writes, 1);
+    // A corrupt destination is never overwritten or accepted.
+    objects.get('grt/art_test')!.data = Buffer.from('corrupt');
+    await assert.rejects(migrateToS3(db, source, destination), {
+      code: 'destination_hash_mismatch',
+    });
+    objects.get('grt/art_test')!.data = file;
+    failKey = '';
+    assert.deepEqual(await migrateToS3(db, source, destination), {
+      migrated: 2,
+      already_migrated: false,
+    });
+    assert.equal(writes, 2); // The previously verified copy was reused, not versioned again.
+    const artifact = (await db.get('artifacts', 'art_test'))!;
+    assert.equal(artifact.object_version, 's3-version-1');
+    assert.deepEqual(await destination.digest(artifact), {
+      sha256: hash(file),
+      size_bytes: file.length,
+    });
+    assert.deepEqual(await readFile(source.localPath('art_test')), file);
+    assert.deepEqual(await readFile(source.localPath('exp_test')), zip);
+    assert.equal(
+      (await db.get('exports', 'exp_test'))!.artifacts[0].object_version,
+      'local-immutable-v1',
+    );
+    await ensureStorage(db, destination.config);
+    await assert.rejects(ensureStorage(db, c), { code: 'storage_location_changed' });
+    await assert.rejects(ensureStorage(db, { ...destination.config, S3_BUCKET: 'other' }), {
+      code: 'storage_location_changed',
+    });
+    assert.deepEqual(await migrateToS3(db, source, destination), {
+      migrated: 0,
+      already_migrated: true,
+    });
+  } finally {
+    await db.close();
+    await rm(directory, { recursive: true, force: true });
+  }
 });

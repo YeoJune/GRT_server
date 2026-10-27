@@ -19,6 +19,7 @@ import { ApiError, assert, equal, secret } from '../util.js';
 
 export class Storage {
   private s3?: S3Client;
+  private usageCache?: { expires: number; value: Promise<unknown> };
   readonly directory: string;
   readonly receiving = new Map<string, number>();
   constructor(public config: Config) {
@@ -29,9 +30,105 @@ export class Storage {
     assert(/^[\w-]+$/.test(id), 422, 'invalid_id', 'Invalid artifact ID');
     return `${this.config.S3_PREFIX}${id}`;
   }
+  async usage() {
+    if (!this.s3) return { status: 'disabled' as const };
+    if (this.usageCache && this.usageCache.expires > Date.now()) return this.usageCache.value;
+    const value = this.measureUsage();
+    // Share in-flight scans and avoid listing every version on each browser refresh.
+    this.usageCache = { expires: Date.now() + 300000, value };
+    return value;
+  }
+  private async measureUsage() {
+    const base = {
+      bucket: this.config.S3_BUCKET,
+      prefix: this.config.S3_PREFIX,
+      budget_bytes: this.config.S3_BUDGET_BYTES,
+    };
+    try {
+      let current_bytes = 0,
+        noncurrent_bytes = 0,
+        object_count = 0,
+        version_count = 0,
+        delete_markers = 0;
+      let keyMarker: string | undefined, versionMarker: string | undefined;
+      const abortSignal = AbortSignal.timeout(30000);
+      do {
+        const page = await this.s3!.send(
+          new ListObjectVersionsCommand({
+            Bucket: this.config.S3_BUCKET,
+            Prefix: this.config.S3_PREFIX,
+            KeyMarker: keyMarker,
+            VersionIdMarker: versionMarker,
+            MaxKeys: 1000,
+          }),
+          { abortSignal },
+        );
+        for (const item of page.Versions || []) {
+          version_count++;
+          if (item.IsLatest) {
+            current_bytes += item.Size || 0;
+            object_count++;
+          } else noncurrent_bytes += item.Size || 0;
+        }
+        delete_markers += page.DeleteMarkers?.length || 0;
+        if (!page.IsTruncated) break;
+        assert(
+          page.NextKeyMarker &&
+            (page.NextKeyMarker !== keyMarker || page.NextVersionIdMarker !== versionMarker),
+          502,
+          'invalid_storage_page',
+          'S3 version listing did not advance',
+        );
+        keyMarker = page.NextKeyMarker;
+        versionMarker = page.NextVersionIdMarker;
+      } while (true);
+      return {
+        ...base,
+        status: 'ok' as const,
+        used_bytes: current_bytes + noncurrent_bytes,
+        current_bytes,
+        noncurrent_bytes,
+        object_count,
+        version_count,
+        delete_markers,
+        checked_at: new Date().toISOString(),
+      };
+    } catch {
+      // Never expose SDK diagnostics, signed URLs, or credential details to clients.
+      if (this.usageCache) this.usageCache.expires = Date.now() + 15000;
+      return {
+        ...base,
+        status: 'error' as const,
+        checked_at: new Date().toISOString(),
+        message: 'S3 사용량을 조회하지 못했습니다. IAM 권한과 서버 설정을 확인하세요.',
+      };
+    }
+  }
   localPath(id: string) {
     assert(/^[\w-]+$/.test(id), 422, 'invalid_id', 'Invalid artifact ID');
     return path.join(this.directory, id);
+  }
+  async existingVersion(id: string) {
+    assert(this.s3, 422, 'invalid_storage', 'S3 storage required');
+    const key = this.key(id);
+    // HEAD on a missing key returns 403 without broad ListBucket permission.
+    // Version listing uses the same prefix-scoped permission as deletion and usage.
+    const result = await this.s3.send(
+      new ListObjectVersionsCommand({
+        Bucket: this.config.S3_BUCKET,
+        Prefix: key,
+        MaxKeys: 1,
+      }),
+    );
+    const latest = result.Versions?.find((v) => v.Key === key && v.IsLatest);
+    if (!latest) return undefined;
+    assert(
+      latest.VersionId && latest.VersionId !== 'null',
+      422,
+      's3_versioning_required',
+      'S3 bucket versioning must be enabled',
+    );
+    return latest.VersionId;
   }
   private signature(id: string, purpose: string, expires: number) {
     return createHmac('sha256', this.config.STORAGE_SIGNING_KEY)
