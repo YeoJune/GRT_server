@@ -278,6 +278,29 @@ test('schema validation returns field errors, preserves defaults and rejects cor
   );
 });
 
+test('omitted and empty policy/requirements resolve the same nested defaults', async () => {
+  const input = jobBody('nested defaults');
+  delete input.policy;
+  const omitted = await call('post', '/jobs/validate', input);
+  const empty = await call('post', '/jobs/validate', { ...input, policy: {}, requirements: {} });
+  assert.equal(omitted.status, 200, JSON.stringify(omitted.body));
+  assert.equal(empty.status, 200, JSON.stringify(empty.body));
+  assert.deepEqual(omitted.body.resolved, empty.body.resolved);
+  assert.deepEqual(omitted.body.resolved.requirements, { gpu_count: 0, labels: [] });
+  assert.deepEqual(omitted.body.resolved.policy, {
+    max_attempt_seconds: (await db.get('settings', 'settings'))!.max_attempt_seconds,
+    eta_seconds: null,
+    checkpointable: false,
+    preflight_seconds: 60,
+    required_artifact_kinds: ['report', 'config', 'provenance'],
+    require_posthoc: false,
+  });
+  assert.equal(
+    (await call('post', '/jobs/validate', { ...input, policy: { require_posthoc: 'yes' } })).status,
+    422,
+  );
+});
+
 test('idempotency survives token replacement, conflicts on changed body, and requires a key', async () => {
   const key = crypto.randomUUID();
   const input = jobBody('idempotent');

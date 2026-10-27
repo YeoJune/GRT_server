@@ -1,7 +1,7 @@
 import dotenv from 'dotenv';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-import { z } from 'zod';
+import { z } from 'zod/v3';
 
 export const root = fileURLToPath(new URL('../..', import.meta.url));
 dotenv.config({ path: path.join(root, '.env'), quiet: true });

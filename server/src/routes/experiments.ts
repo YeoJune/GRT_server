@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { z } from 'zod';
+import { z } from 'zod/v3';
 import type { Config } from '../config.js';
 import type { Database } from '../db/index.js';
 import { audit, writeOnly } from '../auth.js';

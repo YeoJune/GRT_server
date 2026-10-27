@@ -1,6 +1,6 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { Request, Response } from 'express';
-import { z } from 'zod';
+import { z } from 'zod/v3';
 export const now = () => new Date().toISOString();
 export const id = (prefix: string) =>
   `${prefix}_${Date.now().toString(36)}${randomBytes(10).toString('hex')}`;

@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { z } from 'zod';
+import { z } from 'zod/v3';
 import type { Config } from '../config.js';
 import { writeOnly } from '../auth.js';
 import { ApiError, assert } from '../util.js';

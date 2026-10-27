@@ -1,7 +1,7 @@
 import express from 'express';
 import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
-import { ZodError } from 'zod';
+import { ZodError } from 'zod/v3';
 import path from 'node:path';
 import { existsSync } from 'node:fs';
 import type { Config } from './config.js';

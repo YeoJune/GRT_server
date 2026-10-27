@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
-import { z } from 'zod';
+import { z } from 'zod/v3';
 import argon2 from 'argon2';
 import type { Database } from '../db/index.js';
 import type { Config } from '../config.js';

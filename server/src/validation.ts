@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from 'zod/v3';
 export const object = z.record(z.string(), z.unknown());
 export const time = z
   .string()
