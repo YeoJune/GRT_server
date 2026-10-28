@@ -69,6 +69,13 @@ HTTPS·systemd·업데이트·백업/복원·선택 DB/S3 설정은 [운영 문�
 
 운영 파일은 [S3 설정과 기존 파일 이전](docs/operations.md#s3-설정과-기존-파일-이전) 절차로 S3에 모을 수 있습니다. Prepared·checkpoint·리포트·ZIP을 S3에 저장하고 직접 전송하며, EC2에는 DB·서버 코드·ZIP 임시 파일을 둡니다. 초기 S3 관리 기준은 1TB이며 사전 할당이나 저장 제한은 아닙니다. 사용량은 설정 → 저장공간 또는 `npm run cli -- storage usage`로 확인합니다.
 
+`grt-server` 버킷과 EC2 IAM Role을 준비했다면, 실행 중인 실험이 없는 상태에서 아래 일회성 스크립트로 전환합니다. 의존성 설치·빌드·사전 확인·서버 정지·`.env` 수정·파일 검증 이전·시작·상태 확인을 수행합니다. 별도 백업은 만들지 않으며 기존 로컬 원본은 보존합니다.
+
+```bash
+git pull --ff-only origin main
+sh scripts/migrate-s3.sh
+```
+
 ```bash
 npm run check
 npm test

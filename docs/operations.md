@@ -179,6 +179,17 @@ DB_SSL_CA_FILE=/absolute/path/to/rds-global-bundle.pem
 
 S3는 사전 용량 할당이 없습니다. 초기 관리 기준은 **1TB = 1,000,000,000,000 bytes**이며 사용한 만큼 과금됩니다. 기준을 넘겨도 업로드가 차단되거나 과금이 멈추지 않습니다. 아래 설정의 `S3_BUDGET_BYTES`로 기준만 바꿀 수 있습니다.
 
+`grt-server` 버킷·Versioning·EC2 IAM Role이 이미 준비되어 있으면 EC2 checkout에서 다음 일회성 명령으로 전환할 수 있습니다.
+
+```bash
+git pull --ff-only origin main
+sh scripts/migrate-s3.sh
+```
+
+스크립트는 의존성 설치·빌드 후 S3와 진행 중인 작업을 확인하고, 서버 정지 → `.env`의 S3 설정 수정 → 크기·SHA256 검증 이전 → 서버 시작 → HTTPS health·S3 사용량 확인을 수행합니다. 대상은 서울 리전의 `grt-server`, prefix는 `grt/`, 관리 기준은 1TB입니다. DB 경로와 다른 설정은 유지합니다. **별도 백업은 생성하지 않고 기존 로컬 원본은 유지**합니다. 실행 중인 실험·검증·ZIP·삭제 작업이 있으면 사전 확인에서 중단합니다. 이전 실패 시 서버는 정지 상태를 유지하며 원인을 해결하고 같은 명령을 재실행합니다. 성공 후 다시 실행하면 완료된 이전을 재사용합니다. 이 스크립트는 현재 EC2 전환을 위한 일회성 도구이며 일반 업데이트에는 `update.sh`를 사용합니다.
+
+다른 버킷을 사용하거나 수동으로 설정하려면 아래 절차를 따릅니다.
+
 1. AWS CloudShell 또는 관리용 PC의 최신 GRT_server checkout에서 버킷 생성 스크립트를 실행합니다. AWS CLI v2와 버킷 생성·설정 권한이 필요합니다. EC2에 관리자 Access Key를 저장하지 마세요.
 
    ```bash
