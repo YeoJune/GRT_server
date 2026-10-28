@@ -17,7 +17,6 @@
     "check": "npm run check -w server && npm run check -w web",
     "test": "npm run test -w server",
     "db:migrate": "npm run db:migrate -w server",
-    "storage:migrate": "tsx scripts/migrate-storage.ts",
     "account:setup": "npm run account:setup -w server",
     "account:reset": "npm run account:reset -w server",
     "cli": "tsx scripts/grt.ts",

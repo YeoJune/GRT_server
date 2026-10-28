@@ -173,82 +173,46 @@ DB_SSL_CA_FILE=/absolute/path/to/rds-global-bundle.pem
 
 운영 TLS는 인증서를 검증합니다. TLS 없는 개발 DB에만 `DB_SSL=false`를 사용합니다. RDS MySQL은 지원하지 않습니다.
 
-### S3 설정과 기존 파일 이전
+### S3 설정
 
-운영에서는 prepared·checkpoint·리포트·ZIP을 모두 S3에 저장하고 서명 URL로 직접 전송합니다. EC2에는 SQLite·서버 코드·ZIP 생성용 임시 공간을 유지합니다. 다운로드 때문에 S3 파일을 EC2에 복원할 필요는 없습니다. 실행기의 로컬 학습 파일은 기존대로 실행 환경에 남습니다.
+현재 운영 파일은 서울 리전(`ap-northeast-2`)의 `grt-server` 버킷, `grt/` prefix에 저장합니다. Prepared·checkpoint·리포트·ZIP은 S3에서 직접 전송하며 EC2에는 SQLite·서버 코드·ZIP 임시 공간을 둡니다. [S3 이전 완료 기록](archive/20261028_s3_migration.md)을 보존하고 완료된 일회성 생성·이전 도구는 제거했습니다.
 
-S3는 사전 용량 할당이 없습니다. 초기 관리 기준은 **1TB = 1,000,000,000,000 bytes**이며 사용한 만큼 과금됩니다. 기준을 넘겨도 업로드가 차단되거나 과금이 멈추지 않습니다. 아래 설정의 `S3_BUDGET_BYTES`로 기준만 바꿀 수 있습니다.
+새 환경은 첫 실행 전에 비공개 범용 버킷에 Versioning·SSE-S3·퍼블릭 액세스 차단·ACL 비활성화를 적용하고 EC2 IAM Role을 연결합니다. Role에는 다음 권한을 부여합니다.
 
-`grt-server` 버킷·Versioning·EC2 IAM Role이 이미 준비되어 있으면 EC2 checkout에서 다음 일회성 명령으로 전환할 수 있습니다.
+- 객체 `arn:aws:s3:::grt-server/grt/*`: `s3:GetObject`, `s3:GetObjectVersion`, `s3:PutObject`, `s3:DeleteObject`, `s3:DeleteObjectVersion`
+- 버킷 `arn:aws:s3:::grt-server`: `s3:ListBucketVersions`. `s3:prefix`를 `grt/*`로 제한합니다.
+
+```dotenv
+STORAGE_DRIVER=s3
+AWS_REGION=ap-northeast-2
+S3_BUCKET=grt-server
+S3_PREFIX=grt/
+```
+
+AWS SDK 기본 credential chain으로 EC2 Role을 사용합니다. 실행기에는 AWS 키를 전달하지 않습니다. S3는 사전 용량 할당이 없으며 초기 관리 기준은 **1TB = 1,000,000,000,000 bytes**입니다. 선택 설정 `S3_BUDGET_BYTES`로 표시 기준만 바꿀 수 있고, 초과해도 저장·과금은 계속됩니다. 기존 DB의 driver/bucket/prefix/region을 `.env`만 바꿔 전환하는 것은 차단하며 자동 이전은 제공하지 않습니다.
+
+검증한 VersionId만 다운로드하며 서명 URL은 최대 5분과 현재 인증 만료 중 짧은 값까지 유효합니다. 영구 삭제는 기존 URL 만료 후 해당 key의 모든 버전·delete marker를 제거합니다. Object Lock·권한 거부는 오류로 재시도합니다. 별도 복제본·백업은 앱의 삭제 대상이 아닙니다. 버전 만료·Glacier 전환 Lifecycle은 DB가 참조하는 파일을 없앨 수 있으므로 임의로 추가하지 않습니다.
+
+파일 기본 한도는 1GiB(`MAX_ARTIFACT_BYTES`), ZIP 원본 합계는 2GiB(`MAX_EXPORT_BYTES`)입니다. 1TB 관리 기준과 별개입니다. 현재 단일 PUT 방식이므로 S3의 단일 요청 크기 한도도 지켜야 합니다.
+
+### 이전 완료된 로컬 파일 정리
+
+현재 S3 설정과 DB의 저장 위치가 일치하는 EC2 checkout에서 실행합니다. 서버 정지·sudo·백업 생성·추가 설치는 필요하지 않습니다.
 
 ```bash
 git pull --ff-only origin main
-sh scripts/migrate-s3.sh
+sh scripts/cleanup-local-storage.sh
 ```
 
-스크립트는 의존성 설치·빌드 후 S3와 진행 중인 작업을 확인하고, 서버 정지 → `.env`의 S3 설정 수정 → 크기·SHA256 검증 이전 → 서버 시작 → HTTPS health·S3 사용량 확인을 수행합니다. 대상은 서울 리전의 `grt-server`, prefix는 `grt/`, 관리 기준은 1TB입니다. DB 경로와 다른 설정은 유지합니다. **별도 백업은 생성하지 않고 기존 로컬 원본은 유지**합니다. 실행 중인 실험·검증·ZIP·삭제 작업이 있으면 사전 확인에서 중단합니다. 이전 실패 시 서버는 정지 상태를 유지하며 원인을 해결하고 같은 명령을 재실행합니다. 성공 후 다시 실행하면 완료된 이전을 재사용합니다. 이 스크립트는 현재 EC2 전환을 위한 일회성 도구이며 일반 업데이트에는 `update.sh`를 사용합니다.
+확인만 하려면 `sh scripts/cleanup-local-storage.sh --dry-run`을 사용합니다. 실제 삭제가 기본 동작이며 실행 자체가 로컬 복사본 삭제 요청입니다.
 
-EC2의 `ec2-user`로 실행하며 `systemctl stop/start grt`를 비밀번호 없이 sudo로 실행할 수 있어야 합니다. 스크립트는 비밀번호를 묻지 않습니다. sudo 권한이 없으면 해당 명령에서 오류로 중단합니다.
+- DB에 기록된 artifact·ZIP ID에 해당하는 `STORAGE_DIRECTORY`의 일반 파일만 검사합니다. 폴더 전체를 지우지 않습니다.
+- DB의 정확한 S3 object version을 읽어 로컬 파일과 크기·SHA256을 비교하고, verified/ready 파일은 DB의 검증 메타데이터까지 비교합니다. 파일 전체를 읽으므로 용량에 따라 시간이 걸립니다.
+- 삭제 직전에 DB 기록·저장 위치와 로컬 파일의 inode·크기·수정 시각을 다시 확인합니다. 확인한 파일만 unlink하고 DB·설정·S3 원본은 유지합니다.
+- 미등록 파일, 심볼릭 링크, 정리·검증 중인 파일, S3 사본을 확인하지 못한 파일은 남깁니다. `errors`에 ID·원인 코드를 표시하며, 오류가 있어도 다른 확인 가능한 파일은 처리합니다. 오류가 있으면 종료 코드는 1입니다.
+- 결과의 `deleted_files/deleted_bytes`는 삭제한 파일 수·논리 크기, `verified_files/verified_bytes`는 검증한 복사본 수·크기입니다. `skipped_files`와 `remaining_entries`도 확인합니다. 후자는 미등록 항목·하위 폴더를 포함한 남은 디렉터리 항목 수이며, 실제 디스크 여유는 설정 화면에서 확인합니다.
 
-다른 버킷을 사용하거나 수동으로 설정하려면 아래 절차를 따릅니다.
-
-1. AWS CloudShell 또는 관리용 PC의 최신 GRT_server checkout에서 버킷 생성 스크립트를 실행합니다. AWS CLI v2와 버킷 생성·설정 권한이 필요합니다. EC2에 관리자 Access Key를 저장하지 마세요.
-
-   ```bash
-   sh scripts/setup-s3.sh > /tmp/grt-s3-policy.json
-   cat /tmp/grt-s3-policy.json
-   ```
-
-   기본 이름은 `grt-research-<AWS 계정 ID>-apn2`입니다. 원하는 전용 버킷 이름을 첫 인자로 줄 수도 있습니다. 스크립트는 서울 리전, 퍼블릭 접근 차단, ACL 비활성화, SSE-S3 암호화, Versioning을 적용하고 EC2용 최소 권한 정책을 출력합니다. 기존 버킷에는 소유 계정·리전을 확인한 후 설정을 적용하므로 **GRT 전용 버킷에만 실행**합니다. 1TB를 예약하거나 Glacier/Lifecycle 규칙을 만들지 않습니다.
-
-2. IAM 콘솔에서 EC2용 Role을 생성하거나 기존 EC2 Role을 선택하고, 출력한 JSON을 인라인 정책으로 추가합니다. EC2 → 인스턴스 → 작업 → 보안 → IAM 역할 수정에서 연결합니다. 기존 Role에 다른 기능이 있다면 Role을 교체하지 말고 정책을 추가합니다. 신뢰 주체는 EC2(`ec2.amazonaws.com`)입니다. 실행기에는 AWS 키나 버킷 권한을 주지 않습니다.
-
-   IAM 권한은 `grt/` 경로의 GetObject/GetObjectVersion/PutObject/DeleteObject/DeleteObjectVersion과 경로 조건을 적용한 ListBucketVersions, 버킷의 GetBucketVersioning입니다. Versioning 최초 활성화 후에는 AWS 권고대로 15분 뒤 첫 파일 쓰기를 시작합니다.
-
-3. 실행 중인 실험을 정상 종료하고 검증·ZIP·삭제 작업이 끝난 것을 확인합니다. 기존 [백업 절차](#백업과-복원)로 DB·파일·`.env`를 백업합니다. EC2에서 코드를 받은 뒤 빌드하고 서버를 멈춥니다. 이 단계에서는 자동 재시작하는 `update.sh` 대신 아래 명령을 사용합니다.
-
-   ```bash
-   cd /home/ec2-user/GRT_server
-   git pull --ff-only origin main
-   npm ci
-   npm run build
-   sudo systemctl stop grt
-   ```
-
-4. EC2의 기존 `.env`에 다음 항목을 추가·수정합니다. 기존 DB 경로·APP_ORIGIN·서명 키는 유지합니다.
-
-   ```dotenv
-   STORAGE_DRIVER=s3
-   AWS_REGION=ap-northeast-2
-   S3_BUCKET=실제-버킷-이름
-   S3_PREFIX=grt/
-   # 선택: 기본값이 1TB이므로 생략해도 됩니다.
-   S3_BUDGET_BYTES=1000000000000
-   ```
-
-5. 서버를 멈춘 상태에서 이전합니다. 이 DB를 쓰는 다른 서버 프로세스도 없어야 합니다.
-
-   ```bash
-   npm run storage:migrate -- --confirm-stopped
-   ```
-
-   로컬 파일과 S3의 실제 bytes를 SHA256·크기로 비교합니다. 모든 대상이 통과해야 DB의 파일 버전과 저장 위치를 한 transaction으로 전환합니다. 실패 시 같은 명령을 다시 실행하면 이미 복사한 일치 객체를 재사용하며, 내용이 다른 대상은 덮어쓰지 않고 중단합니다. 기존 ZIP bytes와 생성 당시 manifest는 보존하고 이후 새 ZIP에는 S3 버전을 기록합니다. 누락된 verified/ready 파일은 이전을 중단하며, 원래 파일이 없는 미완료 예약은 새 업로드 URL을 받아 사용할 수 있습니다.
-
-   **로컬 원본은 자동 삭제하지 않습니다.** 이전 중 오류는 원인을 해결하고 재시도합니다. DB 전환 전에 중단했다면 `.env`를 기존 local 설정으로 돌려 서비스할 수 있습니다. 성공한 뒤 local 설정으로만 되돌리는 것은 차단됩니다. 성공 후 복구가 필요하면 새 실험을 시작하기 전에 일치하는 DB·파일 백업 전체를 복원합니다. 운영 중 S3→local 또는 버킷 간 이동은 지원하지 않습니다.
-
-6. 성공한 뒤 서버를 켭니다.
-
-   ```bash
-   sudo systemctl start grt
-   curl --fail --show-error https://grt.grtserver.cloud/healthz
-   sudo journalctl -u grt -n 30 --no-pager
-   ```
-
-   웹 설정 → 저장공간에서 S3 연결과 디스크 사용량을 확인합니다. 이전한 리포트 다운로드·hash, 작은 새 upload, prepared 캐시 다운로드, ZIP, resume을 점검합니다. 별도의 테스트 실험으로 영구 삭제 후 해당 key의 모든 버전·delete marker 제거도 확인합니다. 실제 S3 검증을 통과하고 백업을 확인한 뒤 이전 로컬 원본을 정리합니다. DB와 `.env`는 삭제하지 않습니다.
-
-S3는 AWS SDK 기본 credential chain으로 EC2 Role을 사용합니다. 검증한 VersionId만 다운로드하며 URL 수명은 최대 5분과 현재 인증 만료 중 짧은 값입니다. 영구 삭제는 기존 서명 URL 만료 뒤 같은 object key의 모든 버전·delete marker를 제거합니다. Object Lock·권한 거부가 있으면 완료 처리하지 않고 재시도합니다. 이미 시작된 외부 전송·별도 복제본·로컬 이전 원본과 백업은 별도 관리 대상입니다. 버전 만료·Glacier 전환 Lifecycle은 DB가 참조한 파일을 없앨 수 있으므로 임의로 추가하지 않습니다.
-
-파일 기본 한도는 1GiB(`MAX_ARTIFACT_BYTES`), ZIP 원본 합계는 2GiB(`MAX_EXPORT_BYTES`)입니다. 1TB 관리 기준과 별개이며 필요한 경우 실제 checkpoint·prepared 크기에 맞춥니다. 현재 단일 PUT 방식이므로 S3의 단일 요청 크기 한도도 지켜야 합니다.
+같은 명령을 다시 실행하면 이미 지운 파일은 건너뜁니다. S3나 로컬 파일을 수정하지 않고 원인을 해결한 뒤 재실행할 수 있습니다. 이 스크립트는 별도로 만든 tar 백업, 실행기 작업 폴더, OS 임시 파일을 지우지 않습니다.
 
 ### 저장공간 확인
 

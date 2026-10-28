@@ -1,7 +1,7 @@
 import { loadConfig } from './config.js';
 import { createDatabase } from './db/index.js';
 import { createApp } from './app.js';
-import { ensureStorage } from './services/storage-migration.js';
+import { ensureStorage } from './services/storage-state.js';
 
 const config = loadConfig();
 const db = createDatabase(config);

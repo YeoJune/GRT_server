@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "tsc",
+    "build": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsc",
     "check": "tsc --noEmit",
     "start": "node dist/index.js",
     "test": "tsx --test --test-concurrency=1 test/*.test.ts",

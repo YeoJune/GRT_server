@@ -108,28 +108,6 @@ export class Storage {
     assert(/^[\w-]+$/.test(id), 422, 'invalid_id', 'Invalid artifact ID');
     return path.join(this.directory, id);
   }
-  async existingVersion(id: string) {
-    assert(this.s3, 422, 'invalid_storage', 'S3 storage required');
-    const key = this.key(id);
-    // HEAD on a missing key returns 403 without broad ListBucket permission.
-    // Version listing uses the same prefix-scoped permission as deletion and usage.
-    const result = await this.s3.send(
-      new ListObjectVersionsCommand({
-        Bucket: this.config.S3_BUCKET,
-        Prefix: key,
-        MaxKeys: 1,
-      }),
-    );
-    const latest = result.Versions?.find((v) => v.Key === key && v.IsLatest);
-    if (!latest) return undefined;
-    assert(
-      latest.VersionId && latest.VersionId !== 'null',
-      422,
-      's3_versioning_required',
-      'S3 bucket versioning must be enabled',
-    );
-    return latest.VersionId;
-  }
   private signature(id: string, purpose: string, expires: number) {
     return createHmac('sha256', this.config.STORAGE_SIGNING_KEY)
       .update(`${id}:${purpose}:${expires}`)

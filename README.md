@@ -48,7 +48,7 @@ GRT에서 `server_mode='upload'`를 선택하면 기존 notebook 실험의 상�
 - 실험 이름·Campaign 관리, 대기열·우선순위 수정, 종료된 실험·결과 파일 영구 삭제
 - 크기·SHA256 검증, 원본 보관, 개별 다운로드·비동기 ZIP·CLI 결과 수집
 - SQLite 또는 PostgreSQL, 로컬 파일 또는 S3 저장 어댑터
-- 설정 화면의 S3 사용량·서버 디스크 용량 확인, 기존 로컬 파일의 검증된 S3 이전
+- 설정 화면의 S3 사용량·서버 디스크 용량 확인, S3로 이전된 로컬 복사본의 검증·정리
 
 현재 완료 검증기는 `generic/1`입니다. Config·provenance·report·완료 step을 검증하며, GRT 학습의 과학적 타당성 판정과 임의 checkpoint의 자동 복원은 제공하지 않습니다. Retry는 새 attempt의 fresh 실행이며, 이어서 학습은 검증된 GRT resume snapshot으로 새 attempt를 복원합니다. `grt/1`은 거부합니다.
 
@@ -67,13 +67,13 @@ sh scripts/update.sh
 
 HTTPS·systemd·업데이트·백업/복원·선택 DB/S3 설정은 [운영 문서](docs/operations.md), 내부 구성은 [구현 구조](docs/architecture.md)에 정리했습니다.
 
-운영 파일은 [S3 설정과 기존 파일 이전](docs/operations.md#s3-설정과-기존-파일-이전) 절차로 S3에 모을 수 있습니다. Prepared·checkpoint·리포트·ZIP을 S3에 저장하고 직접 전송하며, EC2에는 DB·서버 코드·ZIP 임시 파일을 둡니다. 초기 S3 관리 기준은 1TB이며 사전 할당이나 저장 제한은 아닙니다. 사용량은 설정 → 저장공간 또는 `npm run cli -- storage usage`로 확인합니다.
+운영 파일은 [S3 설정](docs/operations.md#s3-설정)을 사용합니다. Prepared·checkpoint·리포트·ZIP을 S3에 저장하고 직접 전송하며, EC2에는 DB·서버 코드·ZIP 임시 파일을 둡니다. 초기 S3 관리 기준은 1TB이며 사전 할당이나 저장 제한은 아닙니다. 사용량은 설정 → 저장공간 또는 `npm run cli -- storage usage`로 확인합니다.
 
-`grt-server` 버킷과 EC2 IAM Role을 준비했다면, 실행 중인 실험이 없는 상태에서 아래 일회성 스크립트로 전환합니다. 의존성 설치·빌드·사전 확인·서버 정지·`.env` 수정·파일 검증 이전·시작·상태 확인을 수행합니다. 별도 백업은 만들지 않으며 기존 로컬 원본은 보존합니다.
+S3 이전 완료 후 남은 로컬 복사본은 아래 명령으로 정리합니다. S3의 기록된 버전과 크기·SHA256이 일치하는 파일만 삭제합니다. 서버 정지·sudo는 필요하지 않습니다. 미리 확인하려면 `--dry-run`을 추가합니다. [정리 범위와 결과](docs/operations.md#이전-완료된-로컬-파일-정리)를 참고하세요.
 
 ```bash
 git pull --ff-only origin main
-sh scripts/migrate-s3.sh
+sh scripts/cleanup-local-storage.sh
 ```
 
 ```bash

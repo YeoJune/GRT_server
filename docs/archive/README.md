@@ -7,4 +7,5 @@
 | AWS 전체 기능 점검 계획                | [20261023_aws_acceptance_test_plan.md](20261023_aws_acceptance_test_plan.md)                                     |
 | 당시 임시 notebook 실행·장애 복구 절차 | [20261023_aws_test_execution_guide.md](20261023_aws_test_execution_guide.md)                                     |
 | 수신 요약과 사용자 수동 점검 보고      | [20261023_deployment_validation.md](20261023_deployment_validation.md)                                           |
+| S3 이전 완료와 임시 도구 정리          | [20261028_s3_migration.md](20261028_s3_migration.md)                                                             |
 | 초기 API 설계                          | [GRT 설계 기록](https://github.com/YeoJune/GRT/blob/main/docs/archive/20261021_experiment_control_api_design.md) |
