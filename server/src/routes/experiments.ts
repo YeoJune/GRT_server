@@ -150,6 +150,38 @@ export function experimentRoutes(db: Database, c: Config) {
       return { body: await tx.put('queues', { ...q, paused: input.action === 'pause' }) };
     });
   });
+  r.delete('/queues/:id', writeOnly, async (req, res) => {
+    await mutation(
+      db,
+      req,
+      res,
+      async (tx) => {
+        const queue = await tx.get('queues', String(req.params.id));
+        if (!queue) return { status: 204 };
+        assert(
+          !(await tx.list('jobs')).some(
+            (job) =>
+              job.queue === queue.name && ['queued', 'running', 'finalizing'].includes(job.status),
+          ),
+          409,
+          'queue_busy',
+          'Finish, cancel or move queued experiments before deleting this queue',
+        );
+        for (const request of await tx.list('requests')) {
+          if (request.reply?.body?.id === queue.id)
+            await tx.put('requests', {
+              ...request,
+              state: 'deleted',
+              reply: { status: 410, body: null },
+            });
+        }
+        await tx.remove('queues', queue.id);
+        await audit(tx, req, 'queue.delete', { queue_id: queue.id, name: queue.name });
+        return { status: 204 };
+      },
+      { required: true },
+    );
+  });
   r.post('/jobs/validate', async (req, res) => {
     const result = await db.write((tx) => validateJob(tx, req.body));
     const workers = await db.list('workers');
@@ -348,9 +380,14 @@ export function experimentRoutes(db: Database, c: Config) {
         action: z.enum(['cancel', 'retry', 'resume', 'clone']),
         checkpoint_artifact_id: z.string().optional(),
         termination_evidence: z.string().min(10).max(4000).optional(),
+        queue: name.optional(),
         overrides: object.optional(),
       })
       .strict()
+      .refine(
+        (v) => !v.queue || ['retry', 'resume'].includes(v.action),
+        'queue is only supported for retry/resume',
+      )
       .parse(req.body);
     await mutation(
       db,
@@ -402,6 +439,13 @@ export function experimentRoutes(db: Database, c: Config) {
           'invalid_state',
           'Job cannot be retried in this state',
         );
+        const queue = input.queue || job.queue;
+        assert(
+          (await tx.list('queues')).some((q) => q.name === queue),
+          409,
+          'queue_not_found',
+          'Choose an existing queue before retrying or resuming this experiment',
+        );
         if (job.status === 'running') {
           const a = await tx.get('attempts', job.active_attempt_id);
           assert(
@@ -447,12 +491,14 @@ export function experimentRoutes(db: Database, c: Config) {
         }
         await audit(tx, req, `job.${input.action}`, {
           job_id: job.id,
+          queue,
           termination_evidence: input.termination_evidence || 'previous finish confirmed',
         });
         return {
           body: await tx.put('jobs', {
             ...job,
             dispatch: 'queued',
+            queue,
             resume_artifact_id: checkpoint?.id ?? null,
             worker_id: undefined,
             status: 'queued',

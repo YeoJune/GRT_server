@@ -58,7 +58,7 @@ export async function mutation(
         record.state !== 'deleted',
         410,
         'resource_deleted',
-        'The referenced experiment was permanently deleted',
+        'The referenced resource was deleted',
       );
       assert(
         record.request_hash === requestHash,

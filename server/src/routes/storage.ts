@@ -5,6 +5,7 @@ import path from 'node:path';
 import type { Config } from '../config.js';
 import { resolveRoot, root } from '../config.js';
 import type { Storage } from '../services/storage.js';
+import type { DownloadUsage } from '../services/download-usage.js';
 
 export async function diskUsage(c: Config) {
   const paths = [root, tmpdir(), resolveRoot(c.STORAGE_DIRECTORY)];
@@ -47,11 +48,12 @@ export async function diskUsage(c: Config) {
   return { filesystems: [...disks.values()], errors, checked_at: new Date().toISOString() };
 }
 
-export function storageRoutes(c: Config, storage: Storage) {
+export function storageRoutes(c: Config, storage: Storage, downloads: DownloadUsage) {
   const r = Router();
   r.get('/storage/usage', async (_req, res) => {
     const [disk, s3] = await Promise.all([diskUsage(c), storage.usage()]);
     res.json({ driver: c.STORAGE_DRIVER, disk, s3 });
   });
+  r.get('/usage/downloads', async (_req, res) => res.json(await downloads.get()));
   return r;
 }

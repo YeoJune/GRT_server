@@ -53,14 +53,20 @@ Cookie 세션은 기본 절대 8시간 / idle 30분입니다. Token session은 �
 | `GET /capabilities`                  | 기능·한도·heartbeat·lease·저장소 종류                                                      |
 | `GET/PATCH /settings`                | `max_attempt_seconds,upload_margin_seconds`. PATCH는 일부 필드만 가능                      |
 | `GET /storage/usage`                 | 인증된 조회. 저장소 종류, S3 경로의 전체 버전 데이터량·1TB 관리 기준, 서버 파일시스템 용량 |
+| `GET /usage/downloads`               | AWS 청구 계정의 월별 표준 인터넷 전송량, 최근 12개월. Read-only 허용                       |
 | `GET /schemas` / `GET /schemas/{id}` | 불변 schema 조회                                                                           |
 | `POST /schemas`                      | `{id,name,runner,json_schema,report_schema,extensions?}`. [예제](../examples/schema.json)  |
 | `GET/POST /queues`                   | 생성 `{name}`                                                                              |
 | `POST /queues/{id}/actions`          | `{action:"pause"\|"resume"}`                                                               |
+| `DELETE /queues/{id}`                | write·멱등 키 필수. 실험·결과를 보존하고 큐만 삭제. 성공·없는 ID는 204                     |
 
 현재 실행 adapter는 `generic/1`만 지원합니다. JSON Schema draft-07 strict mode를 사용하며 schema의 default를 복제한 spec에 적용합니다. Schema를 나중에 바꾸지 않고 새 ID를 등록합니다. `spec.target_steps`는 양의 정수여야 합니다.
 
 설정은 새 작업에 적용합니다. 자동 삭제와 보관 일수 설정은 제공하지 않으며, 지원하지 않는 설정 필드는 422입니다.
+
+큐는 재사용 가능한 설정으로 실험 종료 후에도 유지합니다. 대기·실행·검증 중인 실험이 있으면 삭제는 409 `queue_busy`입니다. 완료된 실험의 queue 이름·실행 이력·파일은 변경하지 않습니다. 큐 생성·수정의 오래된 멱등 응답은 삭제 시 tombstone으로 바꾸며 재생은 410 `resource_deleted`입니다. 새 키로 같은 이름의 큐를 다시 만들 수 있습니다.
+
+`GET /usage/downloads`는 `status=ok|unavailable`를 반환합니다. ok에는 `source=aws_cost_explorer`, `scope=billing_account`, `current_month`, `checked_at`, `period_start/period_end`, 최신순 `months[{month,internet_out_gb,estimated}]`가 있습니다. AWS의 `DataTransfer-Out-Bytes` 표준 사용 유형을 UsageQuantity GB로 합산하며 특정 버킷이나 앱 요청만의 집계는 아닙니다. UTC 월 기준, 종료일은 오늘 UTC 날짜이며 exclusive입니다. 월 첫날 아직 범위에 포함되지 않은 현재 월의 용량은 null(집계 대기)입니다. 성공 결과는 DB에 24시간 캐시하고 UTC 월이 바뀌면 갱신합니다. unavailable에는 안전한 `code,message`를 반환하며 0으로 대체하지 않습니다. AWS 활성화·IAM·조회 요금은 [운영 문서](operations.md#월별-다운로드-사용량)를 참고하세요.
 
 `GET /storage/usage`는 read-only도 허용합니다. `driver`, `s3`, `disk`를 반환합니다. S3는 `status=ok|disabled|error`이며 ok일 때 `used_bytes`(현재+이전 버전), `current_bytes`, `noncurrent_bytes`, `object_count`, `version_count`, `delete_markers`, `budget_bytes`, `checked_at`을 제공합니다. 설정한 bucket/prefix만 집계하며 응답을 최대 5분 재사용합니다. 조회 실패 시 error 상태와 안내를 반환하고 0으로 처리하지 않습니다. `budget_bytes`는 제한·예약 용량이 아닌 관리 기준입니다.
 
@@ -79,13 +85,15 @@ Cookie 세션은 기본 절대 8시간 / idle 30분입니다. Token session은 �
 | `GET /jobs/{id}`          | attempts / artifacts / summary 포함, lease hash 제외                                                  |
 | `PATCH /jobs/{id}`        | `{name?,campaign?,wandb_url?,queue?,priority?}`. campaign:null로 해제, queue/priority는 queued만 허용 |
 | `DELETE /jobs/{id}`       | write·멱등 키 필수. 정보·이력·파일·관련 ZIP 영구 삭제, 202 deleting / 없는 ID는 204                   |
-| `POST /jobs/{id}/actions` | `{action:"cancel"\|"retry"\|"resume"\|"clone",termination_evidence?,overrides?}`                      |
+| `POST /jobs/{id}/actions` | `{action:"cancel"\|"retry"\|"resume"\|"clone",queue?,termination_evidence?,overrides?}`               |
 
 W&B 링크는 `summary.wandb_url`에 저장하며 HTTPS `wandb.ai` URL을 사용합니다. 실험 수정으로 기존 실행의 링크도 등록·해제할 수 있습니다. GRT는 online run 링크를 heartbeat와 완료 시 자동 전송합니다.
 
 Queued 취소는 즉시 cancelled, running 취소는 cancel_requested만 기록합니다. Stale running retry는 lease 만료와 10자 이상 종료 근거가 필요합니다. 근거는 사람이 이전 process/runtime 종료를 확인한 기록입니다. 서버가 단순 timeout을 종료 증거로 간주하지 않습니다. Failed/interrupted/cancelled는 이미 finish되었으므로 별도 근거 없이 retry할 수 있습니다. Resume은 `grt.resume/1`의 같은 job·verified snapshot을 선택해 새 attempt에 연결합니다. `checkpoint_artifact_id`로 지정하거나 최신 보존 snapshot을 선택합니다. 없으면 409 resume_checkpoint_missing입니다. Stale running의 lease·종료 근거 검사는 retry와 같습니다. Claim의 resume_mode=checkpoint, resume_artifact_ids를 사용하고 worker가 Config·manifest·world size·last/best 관계를 확인합니다. Resume 후 각 attempt에 원본 artifact ID를 보존합니다.
 
 Clone은 새로운 job을 만들며 overrides는 다시 schema 검증합니다.
+
+Retry/resume의 `queue`는 선택 항목입니다. 기존 큐가 삭제되었다면 새 큐 이름을 지정합니다. 사용할 큐가 없으면 409 `queue_not_found`이며 기존 실험·attempt는 변경하지 않습니다. 큐 이동은 불변 spec/hash를 바꾸지 않습니다. Clone의 큐는 `overrides.queue`로 지정합니다.
 
 삭제는 running/finalizing이면 409 `job_active`, 관련 ZIP이 preparing이면 409 `export_busy`입니다. 취소·종료 또는 ZIP 완료 후 새 키로 요청하세요. 접수 즉시 API 파일 접근과 수정·재실행을 차단하고, 비동기 정리 후 GET은 404가 됩니다. `deletion_error`가 있으면 자동 재시도하며 새 DELETE 키로 즉시 재시도를 요청할 수 있습니다. S3는 기존 서명 URL 유효기간만큼 대기합니다. 감사 로그와 중복 방지용 최소 기록, 공유 dataset은 유지합니다. 다중 실험 ZIP은 통째로 삭제하며 다른 실험 원본은 유지합니다.
 
@@ -252,6 +260,9 @@ npm run cli -- jobs clone job_123
 npm run cli -- jobs resume job_123 --checkpoint art_123
 npm run cli -- jobs retry job_123 --evidence "이전 runtime 종료를 확인했습니다"
 npm run cli -- queues pause research
+npm run cli -- queues delete research --yes
+npm run cli -- queues create new-research
+npm run cli -- jobs retry JOB_ID --queue new-research
 npm run cli -- workers drain worker_123
 npm run cli -- results collect --campaign baseline --new --output ./results
 npm run cli -- exports create --jobs job_123,job_456
@@ -261,6 +272,8 @@ npm run cli -- tokens create --name codex --kind read-only --expires-at 2030-01-
 ```
 
 CLI는 기본 JSON을 출력하며 `--json`을 지원합니다. Token 발급 원문은 interactive terminal에서 한 번만 표시하므로 출력 redirect는 거부합니다. `results collect --new`는 기존 로컬 파일의 SHA256까지 확인하고 일치할 때만 건너뜁니다. 파일명은 artifact ID/hash로 정해 원본 파일명 충돌을 피하고 metadata를 별도 JSON으로 저장합니다.
+
+위 명령은 개별 사용 예시입니다. 큐 삭제는 대기·실행·검증 중인 실험을 먼저 정리한 뒤 수행하고, 삭제한 실험 ID는 이후 재시도·복제에 사용할 수 없습니다.
 
 특정 작업 재시도에 같은 키를 사용하려면 `GRT_REQUEST_ID` 환경변수를 고정합니다. 다른 명령에 같은 키를 재사용하면 409이므로 작업 단위로 설정하세요. 내장 shell·SSH·임의 Python 실행은 제공하지 않습니다. 브라우저는 GUI를 통해 동일 API를 사용하며 텍스트 명령 콘솔은 별도로 제공하지 않습니다.
 

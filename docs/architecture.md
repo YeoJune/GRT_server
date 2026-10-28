@@ -48,9 +48,13 @@ Retry는 불변 spec의 fresh attempt를 대기열에 넣습니다. Resume은 �
 
 운영에서 S3를 선택하면 prepared·checkpoint·리포트·ZIP을 모두 같은 S3 저장 어댑터로 처리합니다. EC2에는 DB와 ZIP 생성용 임시 파일이 남습니다. 시작 시 DB에 기록한 driver/bucket/prefix/region과 설정을 비교하여 잘못된 저장소 전환을 차단합니다. 운영 데이터의 S3 이전은 완료했으며 일회성 이전 도구는 제거했습니다. 완료 사실은 아카이브에 보존합니다.
 
-로컬 복사본 정리는 DB에 기록된 정확한 S3 VersionId를 읽어 크기·SHA256을 비교한 뒤 해당 로컬 파일만 unlink합니다. 삭제 직전에 짧은 DB transaction 안에서 저장 위치·파일 메타데이터와 로컬 inode·크기·수정 시각을 재확인합니다. DB·설정·S3 객체는 변경하지 않습니다. 미등록 파일·심볼릭 링크·확인 불가 파일은 보존하며, 정리는 명시적인 운영 스크립트 실행으로만 수행합니다.
+이전 후 남은 로컬 복사본도 정리 완료했으며 해당 일회성 검사·삭제 도구는 제거했습니다. 운영 파일의 업로드·다운로드는 S3 저장 어댑터를 사용합니다.
 
 저장량 조회는 S3의 설정 경로에 대해 전체 object version을 pagination으로 읽고 현재·이전 버전 bytes를 합산합니다. 최대 5분 캐시와 진행 중 요청 공유를 적용하며 별도 broker·일일 집계 DB는 두지 않습니다. 서버 디스크는 파일시스템 통계로 전체·사용·가용량을 읽고 같은 mount를 합칩니다. S3 초기 1TB는 표시용 관리 기준이며 quota가 아닙니다.
+
+월별 인터넷 전송량은 서버가 보지 못하는 S3 직접 다운로드를 임의 추정하지 않고 AWS Cost Explorer UsageQuantity에서 읽습니다. 표준 인터넷 전송 사용 유형을 GB 단위로 제한하고 월별 합계를 최근 12개월로 제공합니다. UTC 오늘 이전 데이터이며 월 첫날 현재 월은 집계 대기가 될 수 있습니다. 성공 결과는 settings의 별도 cache record로 24시간 보존하고 진행 중 요청은 공유합니다. AWS 오류를 0으로 바꾸지 않으며 별도의 전송 이벤트 테이블·브로커는 두지 않습니다.
+
+큐 삭제는 대기·실행·검증 중인 실험이 없는 경우 transaction 안에서 큐 설정만 제거합니다. 실험은 과거 queue 이름과 결과를 보존하며 retry/resume 시 유효한 큐를 다시 선택할 수 있습니다. 실험 등록·claim·큐 삭제는 같은 DB transaction gate를 사용하므로 삭제된 큐에 새 queued 작업이 남지 않습니다.
 
 Export는 요청 시 verified artifact ID/hash/version 집합을 고정합니다. 하나의 ZIP에 원본 파일과 manifest를 담고 fingerprint가 같은 preparing/ready 결과는 재사용합니다. 로컬 ZIP은 저장 디렉터리의 임시 파일로 완전히 복사한 뒤 같은 파일시스템에서 hard link로 확정하므로, OS 임시 디렉터리와 저장소가 다른 mount여도 동작하며 기존 원본은 덮어쓰지 않습니다. 제한은 preparing 2개와 총 원본 bytes 한도입니다. Export API의 24시간 만료는 접근·재사용 기간이며 자동 파일 삭제는 없습니다.
 

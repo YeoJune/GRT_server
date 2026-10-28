@@ -207,6 +207,82 @@ test('storage usage requires authentication and permits read-only inspection', a
   assert.ok(response.body.disk.filesystems.every((d: any) => d.total_bytes > 0));
 });
 
+test('monthly AWS usage is authenticated, read-only and cached', async () => {
+  let queries = 0;
+  (system.downloadUsage as any).client = {
+    send: async () => {
+      queries++;
+      return { DimensionValues: [] };
+    },
+  };
+  assert.equal((await request(system.app).get('/v1/usage/downloads')).status, 401);
+  const result = await call('get', '/usage/downloads', undefined, read);
+  assert.equal(result.status, 200);
+  assert.equal(result.body.status, 'ok');
+  assert.equal(result.body.scope, 'billing_account');
+  assert.equal(result.body.months.length, 12);
+  assert.equal((await call('get', '/usage/downloads')).body.checked_at, result.body.checked_at);
+  assert.equal(queries, 1);
+});
+
+test('queue deletion preserves experiment history, blocks active jobs, and supports retry in another queue', async () => {
+  const createKey = crypto.randomUUID();
+  const original = await call('post', '/queues', { name: 'finished-queue' }, write, createKey);
+  const target = original.body;
+  const job = (await call('post', '/jobs', jobBody('queue history', { queue: target.name }))).body;
+  assert.equal((await call('delete', `/queues/${target.id}`, undefined, read)).status, 403);
+  assert.equal((await call('delete', `/queues/${target.id}`)).body.code, 'queue_busy');
+  for (const status of ['running', 'finalizing']) {
+    await db.write(async (tx) => {
+      await tx.put('jobs', { ...(await tx.get('jobs', job.id))!, status });
+    });
+    assert.equal((await call('delete', `/queues/${target.id}`)).body.code, 'queue_busy');
+  }
+  await db.write(async (tx) => {
+    await tx.put('jobs', { ...(await tx.get('jobs', job.id))!, status: 'failed' });
+  });
+  const before = await db.get('jobs', job.id);
+  const key = crypto.randomUUID();
+  assert.equal((await call('delete', `/queues/${target.id}`, undefined, write, key)).status, 204);
+  assert.equal((await call('delete', `/queues/${target.id}`, undefined, write, key)).status, 204);
+  assert.ok(!(await call('get', '/queues')).body.data.some((q: any) => q.id === target.id));
+  assert.deepEqual(await db.get('jobs', job.id), before);
+  assert.equal(
+    (await call('post', '/queues', { name: target.name }, write, createKey)).body.code,
+    'resource_deleted',
+  );
+  assert.equal(
+    (await call('post', `/jobs/${job.id}/actions`, { action: 'retry' })).body.code,
+    'queue_not_found',
+  );
+  assert.deepEqual(await db.get('jobs', job.id), before);
+  const retried = await call('post', `/jobs/${job.id}/actions`, {
+    action: 'retry',
+    queue: 'research',
+  });
+  assert.equal(retried.status, 200);
+  assert.equal(retried.body.queue, 'research');
+  assert.equal(retried.body.spec_sha256, job.spec_sha256);
+  await call('post', `/jobs/${job.id}/actions`, { action: 'cancel' });
+  const recreated = await call('post', '/queues', { name: target.name });
+  assert.equal(recreated.status, 201);
+  assert.notEqual(recreated.body.id, target.id);
+  await call('delete', `/queues/${recreated.body.id}`);
+  const racing = (await call('post', '/queues', { name: 'racing-queue' })).body;
+  const [removed, submitted] = await Promise.all([
+    call('delete', `/queues/${racing.id}`),
+    call('post', '/jobs', jobBody('racing submit', { queue: racing.name })),
+  ]);
+  assert.ok(
+    (removed.status === 204 && submitted.status === 422) ||
+      (removed.status === 409 && submitted.status === 201),
+  );
+  if (submitted.status === 201) {
+    await call('post', `/jobs/${submitted.body.id}/actions`, { action: 'cancel' });
+    await call('delete', `/queues/${racing.id}`);
+  }
+});
+
 test('read-only cannot write even through POST actions, but can validate', async () => {
   for (const route of [
     '/tokens',

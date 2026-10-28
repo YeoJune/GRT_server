@@ -1,5 +1,64 @@
 import { test, expect } from '@playwright/test';
 
+test.beforeEach(async ({ page }) => {
+  await page.route('**/v1/usage/downloads', (route) =>
+    route.fulfill({
+      json: {
+        status: 'unavailable',
+        current_month: '2026-10',
+        checked_at: new Date().toISOString(),
+        code: 'AccessDeniedException',
+        message: 'AWS 조회 권한이 필요합니다.',
+      },
+    }),
+  );
+});
+
+test('settings shows only this month by default and expands monthly AWS history on mobile', async ({
+  page,
+}) => {
+  let unavailable = false;
+  await page.route('**/v1/usage/downloads', (route) =>
+    route.fulfill({
+      json: unavailable
+        ? {
+            status: 'unavailable',
+            current_month: '2026-10',
+            message: 'AWS 조회 권한이 필요합니다.',
+          }
+        : {
+            status: 'ok',
+            current_month: '2026-10',
+            checked_at: new Date().toISOString(),
+            months: [
+              { month: '2026-10', internet_out_gb: 12.5, estimated: true },
+              { month: '2026-09', internet_out_gb: 42, estimated: false },
+            ],
+          },
+    }),
+  );
+  await page.setViewportSize({ width: 320, height: 844 });
+  await page.goto('/');
+  await page.getByLabel('계정', { exact: true }).fill('owner');
+  await page.getByLabel('비밀번호', { exact: true }).fill('browser-test-password-123');
+  await page.getByRole('button', { name: '로그인', exact: true }).click();
+  await page.getByRole('button', { name: '설정', exact: true }).click();
+  const downloads = page.getByRole('region', { name: '월별 다운로드', exact: true });
+  await expect(downloads).toContainText('12.50 GB');
+  await expect(downloads.getByText('2026-09', { exact: true })).toBeHidden();
+  await downloads.getByText('자세히 보기', { exact: true }).click();
+  await expect(downloads.getByText('2026-09', { exact: true })).toBeVisible();
+  await expect(downloads).toContainText('42.00 GB');
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
+    true,
+  );
+  unavailable = true;
+  await downloads.getByRole('button', { name: '사용량 새로고침' }).click();
+  await expect(downloads).toContainText('AWS 조회 권한');
+  await expect(downloads.getByText('12.50 GB', { exact: true })).toHaveCount(0);
+  await expect(downloads.getByRole('link', { name: 'AWS 사용량 연결 방법 ↗' })).toBeVisible();
+});
+
 test('storage shows S3 versions, the soft budget, disk capacity and lookup failures on mobile', async ({
   page,
 }) => {
@@ -155,6 +214,7 @@ test('owner registers a schema and a queued experiment; read-only session cannot
     await page.keyboard.press('Escape');
     await expect(mobileDialog).not.toBeVisible();
     await page.getByRole('button', { name: '큐·실행기', exact: true }).click();
+    await expect(page.getByRole('button', { name: '큐 삭제', exact: true })).toBeDisabled();
     expect(
       await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
     ).toBe(true);
@@ -169,6 +229,18 @@ test('owner registers a schema and a queued experiment; read-only session cannot
   page.once('dialog', (dialog) => dialog.accept());
   await page.getByRole('button', { name: '취소', exact: true }).click();
   await expect(page.getByRole('button', { name: '이어서 학습', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '큐·실행기', exact: true }).click();
+  page.once('dialog', (dialog) => dialog.accept('followup'));
+  await page.getByRole('button', { name: '+ 큐 만들기' }).click();
+  await expect(page.getByRole('heading', { name: 'followup active', exact: true })).toBeVisible();
+  const finishedQueue = page
+    .getByRole('article')
+    .filter({ has: page.getByRole('heading', { name: 'research active', exact: true }) });
+  page.once('dialog', (dialog) => dialog.accept());
+  await finishedQueue.getByRole('button', { name: '큐 삭제', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'research active', exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: '실험', exact: true }).click();
+  await expect(page.getByRole('button', { name: '관리 실험', exact: true })).toBeVisible();
   await page.screenshot({ path: '/tmp/grt-experiments.png', fullPage: true });
   await page.getByRole('button', { name: '설정', exact: true }).click();
   await page.getByRole('textbox', { name: '토큰 이름', exact: true }).fill('browser-reader');
@@ -192,6 +264,7 @@ test('owner registers a schema and a queued experiment; read-only session cannot
   await page.getByRole('button', { name: '큐·실행기', exact: true }).click();
   await expect(page.getByRole('button', { name: '+ 큐 만들기' })).toBeDisabled();
   await expect(page.getByRole('button', { name: '일시 정지', exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', { name: '큐 삭제', exact: true })).toBeDisabled();
   await page.screenshot({ path: '/tmp/grt-queues.png', fullPage: true });
   await page.getByRole('button', { name: '결과', exact: true }).click();
   await expect(page.getByText('표시할 실험이 없습니다.', { exact: false })).toBeVisible();
@@ -202,7 +275,11 @@ test('owner registers a schema and a queued experiment; read-only session cannot
   await page.getByLabel('비밀번호', { exact: true }).fill('browser-test-password-123');
   await page.getByRole('button', { name: '로그인', exact: true }).click();
   await page.getByRole('button', { name: '실험', exact: true }).click();
-  page.once('dialog', (dialog) => dialog.accept());
+  page.once('dialog', async (dialog) => {
+    expect(dialog.type()).toBe('prompt');
+    page.once('dialog', (confirmation) => confirmation.accept());
+    await dialog.accept('followup');
+  });
   await page.getByRole('button', { name: '이어서 학습', exact: true }).click();
   await expect(page.getByRole('alert')).toContainText('verified GRT resume snapshot');
   page.once('dialog', (dialog) => dialog.dismiss());

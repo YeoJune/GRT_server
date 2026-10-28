@@ -195,24 +195,7 @@ AWS SDK 기본 credential chain으로 EC2 Role을 사용합니다. 실행기에�
 
 파일 기본 한도는 1GiB(`MAX_ARTIFACT_BYTES`), ZIP 원본 합계는 2GiB(`MAX_EXPORT_BYTES`)입니다. 1TB 관리 기준과 별개입니다. 현재 단일 PUT 방식이므로 S3의 단일 요청 크기 한도도 지켜야 합니다.
 
-### 이전 완료된 로컬 파일 정리
-
-현재 S3 설정과 DB의 저장 위치가 일치하는 EC2 checkout에서 실행합니다. 서버 정지·sudo·백업 생성·추가 설치는 필요하지 않습니다.
-
-```bash
-git pull --ff-only origin main
-sh scripts/cleanup-local-storage.sh
-```
-
-확인만 하려면 `sh scripts/cleanup-local-storage.sh --dry-run`을 사용합니다. 실제 삭제가 기본 동작이며 실행 자체가 로컬 복사본 삭제 요청입니다.
-
-- DB에 기록된 artifact·ZIP ID에 해당하는 `STORAGE_DIRECTORY`의 일반 파일만 검사합니다. 폴더 전체를 지우지 않습니다.
-- DB의 정확한 S3 object version을 읽어 로컬 파일과 크기·SHA256을 비교하고, verified/ready 파일은 DB의 검증 메타데이터까지 비교합니다. 파일 전체를 읽으므로 용량에 따라 시간이 걸립니다.
-- 삭제 직전에 DB 기록·저장 위치와 로컬 파일의 inode·크기·수정 시각을 다시 확인합니다. 확인한 파일만 unlink하고 DB·설정·S3 원본은 유지합니다.
-- 미등록 파일, 심볼릭 링크, 정리·검증 중인 파일, S3 사본을 확인하지 못한 파일은 남깁니다. `errors`에 ID·원인 코드를 표시하며, 오류가 있어도 다른 확인 가능한 파일은 처리합니다. 오류가 있으면 종료 코드는 1입니다.
-- 결과의 `deleted_files/deleted_bytes`는 삭제한 파일 수·논리 크기, `verified_files/verified_bytes`는 검증한 복사본 수·크기입니다. `skipped_files`와 `remaining_entries`도 확인합니다. 후자는 미등록 항목·하위 폴더를 포함한 남은 디렉터리 항목 수이며, 실제 디스크 여유는 설정 화면에서 확인합니다.
-
-같은 명령을 다시 실행하면 이미 지운 파일은 건너뜁니다. S3나 로컬 파일을 수정하지 않고 원인을 해결한 뒤 재실행할 수 있습니다. 이 스크립트는 별도로 만든 tar 백업, 실행기 작업 폴더, OS 임시 파일을 지우지 않습니다.
+S3 이전과 기존 로컬 복사본 삭제는 완료했습니다. 일회성 정리 코드도 제거했으며 [완료 기록](archive/20261028_s3_migration.md)을 보존합니다.
 
 ### 저장공간 확인
 
@@ -225,5 +208,33 @@ npm run cli -- storage usage
 - S3: 설정한 bucket/prefix의 현재·이전 버전 데이터량, 파일·버전 수, 관리 기준과 확인 시각. 전체 version 목록을 읽고 최대 5분 재사용하므로 목록 요청 비용이 소량 발생합니다. 다른 prefix와 DB·디스크는 합산하지 않습니다. 이전 버전도 저장비가 발생하며, 이 표시는 청구서 계산이 아닙니다.
 - 디스크: 코드·SQLite·파일 저장 경로·임시 경로가 있는 파일시스템의 전체·사용·서버 계정 가용량. 같은 mount는 한 번만 표시합니다. S3로 바꿔도 ZIP 생성용 여유 공간과 DB 백업은 필요합니다.
 - 조회 실패는 0이 아닌 오류로 표시합니다. S3 권한·Role·리전·prefix를 확인하고 다시 조회합니다. 1TB 초과 안내는 화면에 표시하며 자동 삭제·차단·이메일 경보는 제공하지 않습니다.
+
+### 월별 다운로드 사용량
+
+설정 화면에는 이번 달 인터넷 전송량만 표시하고 **자세히 보기**에서 최근 12개월을 확인합니다. 원본은 AWS Cost Explorer의 청구 사용량이며 EC2·S3 등 현재 청구 계정에 포함된 서비스·리전의 표준 `DataTransfer-Out-Bytes` 항목을 합산합니다. 특정 버킷의 다운로드나 서명 URL 발급량으로 간주하지 않습니다. 무료 적용·할인·다른 과금 항목이 있으므로 이 숫자에 단가를 곱해 전체 AWS 청구액을 계산하지 않습니다.
+
+연결 방법:
+
+1. AWS Billing and Cost Management → Cost Explorer에서 활성화합니다. 처음 활성화하면 데이터 준비 시간이 필요합니다.
+2. 기존 EC2 IAM Role에 아래 인라인 정책을 **추가**합니다. 정책 이름 예시는 `GRTUsageRead`이며 기존 S3 정책은 유지합니다.
+
+   ```json
+   {
+     "Version": "2012-10-17",
+     "Statement": [
+       {
+         "Effect": "Allow",
+         "Action": ["ce:GetCostAndUsage", "ce:GetDimensionValues"],
+         "Resource": "*"
+       }
+     ]
+   }
+   ```
+
+3. 서버 업데이트 후 설정 화면을 엽니다. AccessDenied·데이터 미준비·조회 실패는 용량 0이 아닌 안내로 표시합니다. 권한을 수정했다면 30초 후 사용량 새로고침을 누릅니다.
+
+월 기준은 AWS에 맞춘 UTC이며 오늘 UTC 이전까지 반영된 사용량입니다. 당일 전송은 실시간 반영되지 않습니다. 이번 달 수치는 잠정 집계이고, 월 첫날 아직 데이터 범위가 없으면 집계 대기로 표시합니다. 성공한 결과는 24시간 DB 캐시하므로 서버 재시작·다른 사용자 접속이 조회를 반복하지 않습니다. 월이 바뀌면 캐시 기간과 무관하게 새 월을 조회합니다.
+
+[AWS 공식 요금](https://aws.amazon.com/aws-cost-management/aws-cost-explorer/pricing/) 기준 기본 청구 뷰의 Cost Explorer API는 요청당 $0.01입니다. 일반 조회는 사용 유형·월별 집계 각 1건이며 pagination이 있으면 추가 요청이 발생합니다. 캐시는 반복 조회 비용을 줄입니다. 별도의 hourly/resource 데이터 기능을 활성화할 필요는 없습니다.
 
 PostgreSQL 전환은 기존 데이터를 자동 이전하지 않습니다. 별도로 백업·이전·복원을 검증합니다. Vast offer 검색만 필요하면 `VAST_API_KEY`를 추가합니다. 유료 임대와 자동 과금 종료는 제공하지 않습니다.

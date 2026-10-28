@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, readdir, rm, stat, symlink, unlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, stat, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { loadConfig } from '../src/config.js';
@@ -8,8 +8,7 @@ import { Storage } from '../src/services/storage.js';
 import { diskUsage } from '../src/routes/storage.js';
 import { createDatabase } from '../src/db/index.js';
 import { ensureStorage } from '../src/services/storage-state.js';
-import { cleanupLocalFiles } from '../src/services/storage-cleanup.js';
-import { hash, now } from '../src/util.js';
+import { now } from '../src/util.js';
 
 test('local exports publish complete immutable bytes, including across filesystems', async () => {
   const source = await mkdtemp(path.join(tmpdir(), 'grt-export-source-'));
@@ -201,146 +200,6 @@ test('storage identity rejects a driver/bucket change and old local file referen
     await assert.rejects(ensureStorage(db, { ...c, STORAGE_DRIVER: 's3', S3_BUCKET: 'other' }), {
       code: 'storage_migration_required',
     });
-  } finally {
-    await db.close();
-    await rm(directory, { recursive: true, force: true });
-  }
-});
-
-test('local cleanup deletes only matching pinned S3 copies and preserves metadata and unrelated files', async () => {
-  const { GetObjectCommand } = await import('@aws-sdk/client-s3');
-  const { Readable } = await import('node:stream');
-  const directory = await mkdtemp(path.join(tmpdir(), 'grt-local-cleanup-'));
-  const c = loadConfig({
-    NODE_ENV: 'test',
-    SQLITE_FILENAME: path.join(directory, 'art_database'),
-    STORAGE_DIRECTORY: directory,
-    STORAGE_DRIVER: 's3',
-    S3_BUCKET: 'cleanup-test',
-    STORAGE_SIGNING_KEY: 'k'.repeat(32),
-  });
-  const db = createDatabase(c);
-  const remote = new Storage(c);
-  const objects = new Map<string, Buffer>();
-  const reads: string[] = [];
-  let changeRecord = false,
-    changeFile = false;
-  (remote as any).s3 = {
-    send: async (command: any) => {
-      assert.ok(command instanceof GetObjectCommand); // Cleanup must never write or delete S3 bytes.
-      const id = command.input.Key.slice(c.S3_PREFIX.length);
-      assert.equal(command.input.VersionId, `version-${id}`);
-      reads.push(id);
-      if (id === 'art_missing_remote')
-        throw Object.assign(new Error('sensitive SDK diagnostic'), { name: 'NoSuchVersion' });
-      if (id === 'art_changed' && changeRecord)
-        await db.write(async (tx) => {
-          await tx.put('artifacts', { ...(await tx.get('artifacts', id))!, status: 'purged' });
-        });
-      if (id === 'art_changed_file' && changeFile)
-        await writeFile(remote.localPath(id), 'changed after hashing');
-      return { Body: Readable.from([objects.get(id)!]) };
-    },
-  };
-  const data = Buffer.from('verified original bytes');
-  const ids = [
-    'art_match',
-    'exp_match',
-    'art_bad_local',
-    'art_bad_remote',
-    'art_bad_metadata',
-    'art_missing_remote',
-    'art_changed',
-    'art_changed_file',
-    'art_symlink',
-    'art_failed',
-  ];
-  try {
-    await db.migrate();
-    await ensureStorage(db, c);
-    for (const id of ids) {
-      objects.set(id, data);
-      if (id !== 'art_symlink') await writeFile(remote.localPath(id), data);
-      await db.write((tx) =>
-        tx.put(id.startsWith('exp_') ? 'exports' : 'artifacts', {
-          id,
-          created_at: now(),
-          status: id.startsWith('exp_') ? 'ready' : id === 'art_failed' ? 'failed' : 'verified',
-          object_version: `version-${id}`,
-          sha256: ['art_bad_metadata', 'art_failed'].includes(id) ? 'invalid-metadata' : hash(data),
-          size_bytes: id === 'art_failed' ? 999 : data.length,
-        }),
-      );
-    }
-    await writeFile(path.join(directory, 'unregistered-file'), 'keep unrelated bytes');
-    await writeFile(path.join(directory, '.env'), 'keep settings');
-    await symlink(path.join(directory, '.env'), remote.localPath('art_symlink'));
-    await writeFile(remote.localPath('art_bad_local'), 'wrong local bytes');
-    objects.set('art_bad_remote', Buffer.from('wrong S3 bytes'));
-    // Even if the SQLite filename looks like an artifact ID, it must never be removed.
-    await db.write((tx) =>
-      tx.put('artifacts', {
-        id: 'art_database',
-        created_at: now(),
-        status: 'verified',
-        object_version: 'version-art_database',
-        sha256: 'not-important',
-        size_bytes: 1,
-      }),
-    );
-    const snapshot = {
-      artifacts: await db.list('artifacts'),
-      exports: await db.list('exports'),
-      location: await db.get('settings', 'storage'),
-    };
-    const preview = await cleanupLocalFiles(db, remote, true);
-    assert.equal(preview.deleted_files, 0);
-    assert.equal(preview.verified_files, 5);
-    assert.ok(preview.errors.some((e) => e.code === 'copy_mismatch'));
-    assert.ok(preview.errors.some((e) => e.code === 'metadata_mismatch'));
-    assert.ok(preview.errors.some((e) => e.code === 'NoSuchVersion'));
-    assert.ok(preview.errors.some((e) => e.code === 'not_regular_file'));
-    assert.ok(!JSON.stringify(preview).includes('sensitive'));
-    assert.deepEqual(await readFile(remote.localPath('art_match')), data);
-    const removed = await cleanupLocalFiles(db, remote);
-    assert.equal(removed.deleted_files, 5);
-    assert.equal(removed.deleted_bytes, 5 * data.length);
-    assert.equal(removed.skipped_files, 1);
-    await assert.rejects(readFile(remote.localPath('art_match')), { code: 'ENOENT' });
-    await assert.rejects(readFile(remote.localPath('exp_match')), { code: 'ENOENT' });
-    assert.deepEqual(await db.list('artifacts'), snapshot.artifacts);
-    assert.deepEqual(await db.list('exports'), snapshot.exports);
-    assert.deepEqual(await db.get('settings', 'storage'), snapshot.location);
-    assert.equal(await readFile(path.join(directory, '.env'), 'utf8'), 'keep settings');
-    assert.equal(
-      await readFile(path.join(directory, 'unregistered-file'), 'utf8'),
-      'keep unrelated bytes',
-    );
-    assert.ok((await stat(c.SQLITE_FILENAME)).isFile());
-    assert.ok(!reads.includes('art_database') && !reads.includes('art_symlink'));
-    assert.equal((await cleanupLocalFiles(db, remote)).deleted_files, 0);
-    // A concurrent DB retirement or local rewrite after hashing must prevent unlinking.
-    for (const id of ['art_changed', 'art_changed_file'])
-      await writeFile(remote.localPath(id), data);
-    changeRecord = true;
-    changeFile = true;
-    const raced = await cleanupLocalFiles(db, remote);
-    assert.ok(raced.errors.some((e) => e.id === 'art_changed' && e.code === 'record_changed'));
-    assert.ok(
-      raced.errors.some((e) => e.id === 'art_changed_file' && e.code === 'local_file_changed'),
-    );
-    assert.deepEqual(await readFile(remote.localPath('art_changed')), data);
-    assert.equal(
-      await readFile(remote.localPath('art_changed_file'), 'utf8'),
-      'changed after hashing',
-    );
-    await assert.rejects(cleanupLocalFiles(db, new Storage({ ...c, S3_BUCKET: 'wrong' })), {
-      code: 'storage_location_changed',
-    });
-    await assert.rejects(cleanupLocalFiles(db, new Storage({ ...c, STORAGE_DRIVER: 'local' })), {
-      code: 's3_required',
-    });
-    await ensureStorage(db, c);
   } finally {
     await db.close();
     await rm(directory, { recursive: true, force: true });

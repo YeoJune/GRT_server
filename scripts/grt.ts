@@ -150,13 +150,19 @@ try {
       action: command,
       ...(option('--checkpoint') ? { checkpoint_artifact_id: option('--checkpoint') } : {}),
       ...(option('--evidence') ? { termination_evidence: option('--evidence') } : {}),
+      ...(option('--queue') ? { queue: option('--queue') } : {}),
     });
   else if (resource === 'queues' && command === 'create')
     result = await request('/queues', 'POST', { name: subject });
-  else if (resource === 'queues' && ['pause', 'resume'].includes(command)) {
+  else if (resource === 'queues' && ['pause', 'resume', 'delete'].includes(command)) {
+    if (command === 'delete' && !args.includes('--yes'))
+      throw new Error('Use queues delete NAME --yes');
     const queue = (await list('/queues')).find((q: any) => q.id === subject || q.name === subject);
     if (!queue) throw new Error('Queue not found');
-    result = await request(`/queues/${queue.id}/actions`, 'POST', { action: command });
+    result =
+      command === 'delete'
+        ? await request(`/queues/${queue.id}`, 'DELETE')
+        : await request(`/queues/${queue.id}/actions`, 'POST', { action: command });
   } else if (resource === 'workers' && ['drain', 'resume'].includes(command))
     result = await request(`/workers/${encodeURIComponent(subject)}/actions`, 'POST', {
       action: command,
@@ -187,7 +193,7 @@ try {
     delete result.token;
   } else
     throw new Error(
-      'Commands: me; storage usage; jobs submit|validate|batch FILE, list [--queue NAME], get|cancel|retry|resume|clone ID, update ID --file metadata.json, delete ID --yes; queues create|pause|resume NAME; workers drain|resume ID; schemas register FILE; results collect [--campaign NAME] [--new] [--output DIR]; exports create --jobs ID,ID; exports get ID; requests get ID; tokens create --kind read-only --expires-at ISO',
+      'Commands: me; storage usage; jobs submit|validate|batch FILE, list [--queue NAME], get|cancel|retry|resume|clone ID [--queue NAME for retry/resume], update ID --file metadata.json, delete ID --yes; queues create|pause|resume NAME, delete NAME --yes; workers drain|resume ID; schemas register FILE; results collect [--campaign NAME] [--new] [--output DIR]; exports create --jobs ID,ID; exports get ID; requests get ID; tokens create --kind read-only --expires-at ISO',
     );
   if (result?.csrf_token) delete result.csrf_token;
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);

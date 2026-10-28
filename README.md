@@ -42,13 +42,13 @@ GRT에서 `server_mode='upload'`를 선택하면 기존 notebook 실험의 상�
 - 비밀번호·API 토큰 로그인, HttpOnly 세션, Origin·CSRF 검사, 로그인 속도 제한
 - `write` / `read-only` 권한, 토큰 발급·만료·폐기, 감사 로그
 - 불변 schema·spec, 원자적 batch 등록, 재요청 중복 방지
-- 우선순위 큐·pause/resume·worker drain, 호환 조건·deadline 검사, 원자적 claim
+- 우선순위 큐·pause/resume·사용을 마친 큐 삭제·worker drain, 호환 조건·deadline 검사, 원자적 claim
 - prepared 공유 캐시·선택 다운로드, GRT snapshot을 통한 환경 간 학습 재개
 - attached 실행, heartbeat·lease·generation, 취소 전달과 종료 근거를 남기는 stale 복구
 - 실험 이름·Campaign 관리, 대기열·우선순위 수정, 종료된 실험·결과 파일 영구 삭제
 - 크기·SHA256 검증, 원본 보관, 개별 다운로드·비동기 ZIP·CLI 결과 수집
 - SQLite 또는 PostgreSQL, 로컬 파일 또는 S3 저장 어댑터
-- 설정 화면의 S3 사용량·서버 디스크 용량 확인, S3로 이전된 로컬 복사본의 검증·정리
+- 설정 화면의 S3·디스크 저장공간, AWS 월별 인터넷 전송량·최근 12개월 이력 조회
 
 현재 완료 검증기는 `generic/1`입니다. Config·provenance·report·완료 step을 검증하며, GRT 학습의 과학적 타당성 판정과 임의 checkpoint의 자동 복원은 제공하지 않습니다. Retry는 새 attempt의 fresh 실행이며, 이어서 학습은 검증된 GRT resume snapshot으로 새 attempt를 복원합니다. `grt/1`은 거부합니다.
 
@@ -69,12 +69,9 @@ HTTPS·systemd·업데이트·백업/복원·선택 DB/S3 설정은 [운영 문�
 
 운영 파일은 [S3 설정](docs/operations.md#s3-설정)을 사용합니다. Prepared·checkpoint·리포트·ZIP을 S3에 저장하고 직접 전송하며, EC2에는 DB·서버 코드·ZIP 임시 파일을 둡니다. 초기 S3 관리 기준은 1TB이며 사전 할당이나 저장 제한은 아닙니다. 사용량은 설정 → 저장공간 또는 `npm run cli -- storage usage`로 확인합니다.
 
-S3 이전 완료 후 남은 로컬 복사본은 아래 명령으로 정리합니다. S3의 기록된 버전과 크기·SHA256이 일치하는 파일만 삭제합니다. 서버 정지·sudo는 필요하지 않습니다. 미리 확인하려면 `--dry-run`을 추가합니다. [정리 범위와 결과](docs/operations.md#이전-완료된-로컬-파일-정리)를 참고하세요.
+S3 이전과 로컬 복사본 정리는 완료했으며 일회성 실행 도구는 제거했습니다. [완료 기록](docs/archive/20261028_s3_migration.md)은 아카이브에 보존합니다.
 
-```bash
-git pull --ff-only origin main
-sh scripts/cleanup-local-storage.sh
-```
+큐는 대기·실행·검증 중인 실험이 없으면 웹 또는 CLI에서 삭제할 수 있으며 완료된 실험과 결과는 유지합니다. 설정의 월별 다운로드 사용량은 [AWS Cost Explorer 연결](docs/operations.md#월별-다운로드-사용량) 후 AWS 청구 계정 전체의 표준 인터넷 전송량을 표시합니다. 이번 달 합계와 자세히 보기의 최근 12개월 이력을 제공하며 실시간 전송 계수는 아닙니다.
 
 ```bash
 npm run check
