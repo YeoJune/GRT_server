@@ -53,7 +53,6 @@ Cookie 세션은 기본 절대 8시간 / idle 30분입니다. Token session은 �
 | `GET /capabilities`                  | 기능·한도·heartbeat·lease·저장소 종류                                                      |
 | `GET/PATCH /settings`                | `max_attempt_seconds,upload_margin_seconds`. PATCH는 일부 필드만 가능                      |
 | `GET /storage/usage`                 | 인증된 조회. 저장소 종류, S3 경로의 전체 버전 데이터량·1TB 관리 기준, 서버 파일시스템 용량 |
-| `GET /usage/downloads`               | AWS 청구 계정의 월별 표준 인터넷 전송량, 최근 12개월. Read-only 허용                       |
 | `GET /schemas` / `GET /schemas/{id}` | 불변 schema 조회                                                                           |
 | `POST /schemas`                      | `{id,name,runner,json_schema,report_schema,extensions?}`. [예제](../examples/schema.json)  |
 | `GET/POST /queues`                   | 생성 `{name}`                                                                              |
@@ -65,8 +64,6 @@ Cookie 세션은 기본 절대 8시간 / idle 30분입니다. Token session은 �
 설정은 새 작업에 적용합니다. 자동 삭제와 보관 일수 설정은 제공하지 않으며, 지원하지 않는 설정 필드는 422입니다.
 
 큐는 재사용 가능한 설정으로 실험 종료 후에도 유지합니다. 대기·실행·검증 중인 실험이 있으면 삭제는 409 `queue_busy`입니다. 완료된 실험의 queue 이름·실행 이력·파일은 변경하지 않습니다. 큐 생성·수정의 오래된 멱등 응답은 삭제 시 tombstone으로 바꾸며 재생은 410 `resource_deleted`입니다. 새 키로 같은 이름의 큐를 다시 만들 수 있습니다.
-
-`GET /usage/downloads`는 `status=ok|unavailable`를 반환합니다. ok에는 `source=aws_cost_explorer`, `scope=billing_account`, `current_month`, `checked_at`, `period_start/period_end`, 최신순 `months[{month,internet_out_gb,estimated}]`가 있습니다. AWS의 `DataTransfer-Out-Bytes` 표준 사용 유형을 UsageQuantity GB로 합산하며 특정 버킷이나 앱 요청만의 집계는 아닙니다. UTC 월 기준, 종료일은 오늘 UTC 날짜이며 exclusive입니다. 월 첫날 아직 범위에 포함되지 않은 현재 월의 용량은 null(집계 대기)입니다. 성공 결과는 DB에 24시간 캐시하고 UTC 월이 바뀌면 갱신합니다. unavailable에는 안전한 `code,message`를 반환하며 0으로 대체하지 않습니다. AWS 활성화·IAM·조회 요금은 [운영 문서](operations.md#월별-다운로드-사용량)를 참고하세요.
 
 `GET /storage/usage`는 read-only도 허용합니다. `driver`, `s3`, `disk`를 반환합니다. S3는 `status=ok|disabled|error`이며 ok일 때 `used_bytes`(현재+이전 버전), `current_bytes`, `noncurrent_bytes`, `object_count`, `version_count`, `delete_markers`, `budget_bytes`, `checked_at`을 제공합니다. 설정한 bucket/prefix만 집계하며 응답을 최대 5분 재사용합니다. 조회 실패 시 error 상태와 안내를 반환하고 0으로 처리하지 않습니다. `budget_bytes`는 제한·예약 용량이 아닌 관리 기준입니다.
 

@@ -8,6 +8,7 @@ import { Storage } from '../src/services/storage.js';
 import { diskUsage } from '../src/routes/storage.js';
 import { createDatabase } from '../src/db/index.js';
 import { ensureStorage } from '../src/services/storage-state.js';
+import * as initial from '../src/db/migrations/001_initial.js';
 import { now } from '../src/util.js';
 
 test('local exports publish complete immutable bytes, including across filesystems', async () => {
@@ -200,6 +201,63 @@ test('storage identity rejects a driver/bucket change and old local file referen
     await assert.rejects(ensureStorage(db, { ...c, STORAGE_DRIVER: 's3', S3_BUCKET: 'other' }), {
       code: 'storage_migration_required',
     });
+  } finally {
+    await db.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('removing AWS usage clears only the disposable cache and preserves storage/settings/experiments', async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'grt-remove-usage-'));
+  const db = createDatabase(
+    loadConfig({
+      NODE_ENV: 'test',
+      SQLITE_FILENAME: path.join(directory, 'db.sqlite'),
+      STORAGE_SIGNING_KEY: 'k'.repeat(32),
+    }),
+  );
+  try {
+    await db.sql.migrate.latest({
+      migrationSource: {
+        getMigrations: async () => ['001_initial'],
+        getMigrationName: (name: string) => name,
+        getMigration: async () => initial,
+      },
+    });
+    const settings = {
+      id: 'settings',
+      created_at: now(),
+      max_attempt_seconds: 7200,
+      upload_margin_seconds: 90,
+    };
+    const storage = {
+      id: 'storage',
+      created_at: now(),
+      location: { driver: 's3', bucket: 'grt-server', prefix: 'grt/', region: 'ap-northeast-2' },
+    };
+    const job = {
+      id: 'job_history',
+      created_at: now(),
+      status: 'succeeded',
+      spec: { target_steps: 100 },
+    };
+    await db.write(async (tx) => {
+      await tx.put('settings', settings);
+      await tx.put('settings', storage);
+      await tx.put('jobs', job);
+      await tx.put('settings', {
+        id: 'aws-download-usage',
+        created_at: now(),
+        report: { months: [] },
+      });
+    });
+    await db.migrate();
+    assert.equal(await db.get('settings', 'aws-download-usage'), undefined);
+    assert.deepEqual(await db.get('settings', 'settings'), settings);
+    assert.deepEqual(await db.get('settings', 'storage'), storage);
+    assert.deepEqual(await db.get('jobs', job.id), job);
+    await db.migrate();
+    assert.deepEqual(await db.get('jobs', job.id), job);
   } finally {
     await db.close();
     await rm(directory, { recursive: true, force: true });

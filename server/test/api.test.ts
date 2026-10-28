@@ -198,6 +198,7 @@ test('health, authentication and cookie CSRF', async () => {
 });
 
 test('storage usage requires authentication and permits read-only inspection', async () => {
+  assert.equal((await call('get', '/usage/downloads', undefined, read)).status, 404);
   assert.equal((await request(system.app).get('/v1/storage/usage')).status, 401);
   const response = await call('get', '/storage/usage', undefined, read);
   assert.equal(response.status, 200);
@@ -205,24 +206,6 @@ test('storage usage requires authentication and permits read-only inspection', a
   assert.deepEqual(response.body.s3, { status: 'disabled' });
   assert.ok(response.body.disk.filesystems.length > 0);
   assert.ok(response.body.disk.filesystems.every((d: any) => d.total_bytes > 0));
-});
-
-test('monthly AWS usage is authenticated, read-only and cached', async () => {
-  let queries = 0;
-  (system.downloadUsage as any).client = {
-    send: async () => {
-      queries++;
-      return { DimensionValues: [] };
-    },
-  };
-  assert.equal((await request(system.app).get('/v1/usage/downloads')).status, 401);
-  const result = await call('get', '/usage/downloads', undefined, read);
-  assert.equal(result.status, 200);
-  assert.equal(result.body.status, 'ok');
-  assert.equal(result.body.scope, 'billing_account');
-  assert.equal(result.body.months.length, 12);
-  assert.equal((await call('get', '/usage/downloads')).body.checked_at, result.body.checked_at);
-  assert.equal(queries, 1);
 });
 
 test('queue deletion preserves experiment history, blocks active jobs, and supports retry in another queue', async () => {

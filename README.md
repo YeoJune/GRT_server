@@ -48,7 +48,7 @@ GRT에서 `server_mode='upload'`를 선택하면 기존 notebook 실험의 상�
 - 실험 이름·Campaign 관리, 대기열·우선순위 수정, 종료된 실험·결과 파일 영구 삭제
 - 크기·SHA256 검증, 원본 보관, 개별 다운로드·비동기 ZIP·CLI 결과 수집
 - SQLite 또는 PostgreSQL, 로컬 파일 또는 S3 저장 어댑터
-- 설정 화면의 S3·디스크 저장공간, AWS 월별 인터넷 전송량·최근 12개월 이력 조회
+- 설정 화면의 S3 저장량·서버 디스크 사용량·가용량 조회
 
 현재 완료 검증기는 `generic/1`입니다. Config·provenance·report·완료 step을 검증하며, GRT 학습의 과학적 타당성 판정과 임의 checkpoint의 자동 복원은 제공하지 않습니다. Retry는 새 attempt의 fresh 실행이며, 이어서 학습은 검증된 GRT resume snapshot으로 새 attempt를 복원합니다. `grt/1`은 거부합니다.
 
@@ -71,7 +71,7 @@ HTTPS·systemd·업데이트·백업/복원·선택 DB/S3 설정은 [운영 문�
 
 S3 이전과 로컬 복사본 정리는 완료했으며 일회성 실행 도구는 제거했습니다. [완료 기록](docs/archive/20261028_s3_migration.md)은 아카이브에 보존합니다.
 
-큐는 대기·실행·검증 중인 실험이 없으면 웹 또는 CLI에서 삭제할 수 있으며 완료된 실험과 결과는 유지합니다. 설정의 월별 다운로드 사용량은 [AWS Cost Explorer 연결](docs/operations.md#월별-다운로드-사용량) 후 AWS 청구 계정 전체의 표준 인터넷 전송량을 표시합니다. 이번 달 합계와 자세히 보기의 최근 12개월 이력을 제공하며 실시간 전송 계수는 아닙니다.
+큐는 대기·실행·검증 중인 실험이 없으면 웹 또는 CLI에서 삭제할 수 있으며 완료된 실험과 결과는 유지합니다.
 
 ```bash
 npm run check

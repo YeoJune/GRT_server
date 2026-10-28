@@ -9,3 +9,4 @@
 | 수신 요약과 사용자 수동 점검 보고      | [20261023_deployment_validation.md](20261023_deployment_validation.md)                                           |
 | S3 이전 완료와 임시 도구 정리          | [20261028_s3_migration.md](20261028_s3_migration.md)                                                             |
 | 초기 API 설계                          | [GRT 설계 기록](https://github.com/YeoJune/GRT/blob/main/docs/archive/20261021_experiment_control_api_design.md) |
+| AWS 사용량 조회 도입 후 철회           | [20261028_aws_usage_tracking.md](20261028_aws_usage_tracking.md)                                                 |

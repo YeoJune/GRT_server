@@ -4,6 +4,7 @@ import path from 'node:path';
 import type { Config } from '../config.js';
 import { resolveRoot } from '../config.js';
 import * as initial from './migrations/001_initial.js';
+import * as removeAwsUsageCache from './migrations/002_remove_aws_usage_cache.js';
 import { now } from '../util.js';
 
 export type RecordData = { id: string; created_at: string; [key: string]: any };
@@ -32,11 +33,15 @@ export class Store {
 export class Database extends Store {
   declare sql: Knex;
   async migrate() {
+    const migrations = {
+      '001_initial': initial,
+      '002_remove_aws_usage_cache': removeAwsUsageCache,
+    };
     await this.sql.migrate.latest({
       migrationSource: {
-        getMigrations: async () => ['001_initial'],
+        getMigrations: async () => Object.keys(migrations) as (keyof typeof migrations)[],
         getMigrationName: (m: string) => m,
-        getMigration: async () => initial,
+        getMigration: async (m: keyof typeof migrations) => migrations[m],
       },
     });
     await this.write(async (tx) => {

@@ -1,64 +1,5 @@
 import { test, expect } from '@playwright/test';
 
-test.beforeEach(async ({ page }) => {
-  await page.route('**/v1/usage/downloads', (route) =>
-    route.fulfill({
-      json: {
-        status: 'unavailable',
-        current_month: '2026-10',
-        checked_at: new Date().toISOString(),
-        code: 'AccessDeniedException',
-        message: 'AWS 조회 권한이 필요합니다.',
-      },
-    }),
-  );
-});
-
-test('settings shows only this month by default and expands monthly AWS history on mobile', async ({
-  page,
-}) => {
-  let unavailable = false;
-  await page.route('**/v1/usage/downloads', (route) =>
-    route.fulfill({
-      json: unavailable
-        ? {
-            status: 'unavailable',
-            current_month: '2026-10',
-            message: 'AWS 조회 권한이 필요합니다.',
-          }
-        : {
-            status: 'ok',
-            current_month: '2026-10',
-            checked_at: new Date().toISOString(),
-            months: [
-              { month: '2026-10', internet_out_gb: 12.5, estimated: true },
-              { month: '2026-09', internet_out_gb: 42, estimated: false },
-            ],
-          },
-    }),
-  );
-  await page.setViewportSize({ width: 320, height: 844 });
-  await page.goto('/');
-  await page.getByLabel('계정', { exact: true }).fill('owner');
-  await page.getByLabel('비밀번호', { exact: true }).fill('browser-test-password-123');
-  await page.getByRole('button', { name: '로그인', exact: true }).click();
-  await page.getByRole('button', { name: '설정', exact: true }).click();
-  const downloads = page.getByRole('region', { name: '월별 다운로드', exact: true });
-  await expect(downloads).toContainText('12.50 GB');
-  await expect(downloads.getByText('2026-09', { exact: true })).toBeHidden();
-  await downloads.getByText('자세히 보기', { exact: true }).click();
-  await expect(downloads.getByText('2026-09', { exact: true })).toBeVisible();
-  await expect(downloads).toContainText('42.00 GB');
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
-    true,
-  );
-  unavailable = true;
-  await downloads.getByRole('button', { name: '사용량 새로고침' }).click();
-  await expect(downloads).toContainText('AWS 조회 권한');
-  await expect(downloads.getByText('12.50 GB', { exact: true })).toHaveCount(0);
-  await expect(downloads.getByRole('link', { name: 'AWS 사용량 연결 방법 ↗' })).toBeVisible();
-});
-
 test('storage shows S3 versions, the soft budget, disk capacity and lookup failures on mobile', async ({
   page,
 }) => {
@@ -109,6 +50,7 @@ test('storage shows S3 versions, the soft budget, disk capacity and lookup failu
   await page.getByRole('button', { name: '로그인', exact: true }).click();
   await page.getByRole('button', { name: '설정', exact: true }).click();
   const storage = page.getByRole('region', { name: '저장공간', exact: true });
+  await expect(page.getByRole('region', { name: '월별 다운로드', exact: true })).toHaveCount(0);
   await expect(storage).toContainText('1.10 TB');
   await expect(storage).toContainText('이전 버전 100.00 GB');
   await expect(storage).toContainText('관리 기준에 도달');

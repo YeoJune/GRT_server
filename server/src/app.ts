@@ -16,13 +16,11 @@ import { providerRoutes } from './routes/providers.js';
 import { storageRoutes } from './routes/storage.js';
 import { Storage } from './services/storage.js';
 import { Background } from './services/background.js';
-import { DownloadUsage } from './services/download-usage.js';
 
 export function createApp(db: Database, c: Config) {
   const app = express();
   const storage = new Storage(c);
   const background = new Background(db, storage);
-  const downloadUsage = new DownloadUsage(db);
   app.disable('x-powered-by');
   if (c.TRUST_PROXY) app.set('trust proxy', c.TRUST_PROXY);
   app.use(
@@ -50,7 +48,7 @@ export function createApp(db: Database, c: Config) {
     experimentRoutes(db, c),
     artifactRoutes(db, c, storage),
     providerRoutes(c),
-    storageRoutes(c, storage, downloadUsage),
+    storageRoutes(c, storage),
   );
   app.use('/v1', (_req, _res, next) => next(new ApiError(404, 'not_found', 'API route not found')));
   const web = path.join(root, 'web/dist');
@@ -99,5 +97,5 @@ export function createApp(db: Database, c: Config) {
           : err.field_errors || [],
     });
   });
-  return { app, storage, background, downloadUsage };
+  return { app, storage, background };
 }

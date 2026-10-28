@@ -259,93 +259,6 @@ function StorageUsage() {
     </section>
   );
 }
-function MonthlyDownloads() {
-  const [usage, setUsage] = useState<any>();
-  const [error, setError] = useState<unknown>();
-  const [loading, setLoading] = useState(false);
-  const refresh = useCallback(async () => {
-    setLoading(true);
-    setError(undefined);
-    try {
-      setUsage(await api('/usage/downloads'));
-    } catch (e) {
-      setError(e);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-  useEffect(() => {
-    void refresh();
-  }, [refresh]);
-  const amount = (value: number | null) =>
-    value === null
-      ? '집계 대기'
-      : `${value.toLocaleString('ko-KR', { minimumFractionDigits: 2, maximumFractionDigits: 3 })} GB`;
-  const current = usage?.months?.find((m: any) => m.month === usage.current_month);
-  return (
-    <section aria-label="월별 다운로드">
-      <div className="toolbar">
-        <h2>월별 다운로드 사용량</h2>
-        <button disabled={loading} onClick={() => void refresh()}>
-          사용량 새로고침
-        </button>
-      </div>
-      <ErrorBox error={error} />
-      {loading && <p role="status">AWS 사용량 확인 중…</p>}
-      {usage?.status === 'unavailable' && (
-        <>
-          <p role="status">{usage.message}</p>
-          <a
-            href="https://github.com/YeoJune/GRT_server/blob/main/docs/operations.md#월별-다운로드-사용량"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            AWS 사용량 연결 방법 ↗
-          </a>
-        </>
-      )}
-      {usage?.status === 'ok' && current && (
-        <>
-          <p>
-            <strong>{amount(current.internet_out_gb)}</strong> · 이번 달 ({usage.current_month},
-            UTC)
-            {current.estimated && ' · 잠정 집계'}
-          </p>
-          <p className="muted">
-            AWS 청구 계정 전체의 표준 인터넷 전송량입니다. 특정 버킷 전용 수치가 아닙니다.
-            <br />
-            UTC 기준 오늘 이전 데이터이며, AWS 집계에는 지연이 있습니다. 조회 결과는 24시간
-            재사용합니다. 확인 {date(usage.checked_at)}
-          </p>
-          <details className="download-history">
-            <summary>자세히 보기</summary>
-            <p className="muted">최근 12개월 · AWS UsageQuantity의 GB 단위 · UTC 월 기준</p>
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>월</th>
-                    <th>인터넷 전송량</th>
-                    <th>집계</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {usage.months.map((m: any) => (
-                    <tr key={m.month}>
-                      <td>{m.month}</td>
-                      <td>{amount(m.internet_out_gb)}</td>
-                      <td>{m.estimated ? '잠정' : '집계됨'}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </details>
-        </>
-      )}
-    </section>
-  );
-}
 function App() {
   const [me, setMe] = useState<any>();
   const [boot, setBoot] = useState(true);
@@ -1137,7 +1050,6 @@ function App() {
         {tab === '설정' && (
           <>
             <StorageUsage />
-            <MonthlyDownloads />
             <section>
               <h2>연결 정보</h2>
               <p>
