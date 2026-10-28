@@ -6,7 +6,6 @@ cd "$(dirname "$0")/.."
 [ -f .env ] || { echo '.env 파일이 필요합니다.' >&2; exit 1; }
 exec 9>"${TMPDIR:-/tmp}/grt-server-s3-migration.lock"
 flock -n 9 || { echo '다른 S3 전환이 진행 중입니다.' >&2; exit 1; }
-sudo -v
 npm ci
 npm run build
 
@@ -48,7 +47,7 @@ on_exit() {
 }
 trap on_exit EXIT
 trap 'exit 1' HUP INT TERM
-sudo systemctl stop grt
+sudo -n systemctl stop grt
 stopped=1
 
 node --input-type=module <<'JS'
@@ -78,7 +77,7 @@ console.log('.env의 S3 설정을 적용했습니다.');
 JS
 
 npm run storage:migrate -- --confirm-stopped
-sudo systemctl start grt
+sudo -n systemctl start grt
 stopped=0
 curl --fail --silent --show-error \
   --retry 10 --retry-delay 1 --retry-connrefused --max-time 5 \
