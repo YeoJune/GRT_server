@@ -1,9 +1,9 @@
 import { createHmac, createHash } from 'node:crypto';
 import { constants, createReadStream, createWriteStream } from 'node:fs';
-import { copyFile, mkdir, stat, link, unlink } from 'node:fs/promises';
+import { copyFile, mkdir, stat, link, unlink, open } from 'node:fs/promises';
 import path from 'node:path';
 import { Readable, Transform } from 'node:stream';
-import { pipeline } from 'node:stream/promises';
+import { pipeline, finished } from 'node:stream/promises';
 import {
   GetObjectCommand,
   DeleteObjectsCommand,
@@ -21,7 +21,7 @@ export class Storage {
   private s3?: S3Client;
   private usageCache?: { expires: number; value: Promise<unknown> };
   readonly directory: string;
-  readonly receiving = new Map<string, number>();
+  readonly receiving = new Set<string>();
   constructor(public config: Config) {
     this.directory = resolveRoot(config.STORAGE_DIRECTORY);
     if (config.STORAGE_DRIVER === 's3') this.s3 = new S3Client({ region: config.AWS_REGION });
@@ -124,85 +124,123 @@ export class Storage {
       'Transfer URL invalid or expired',
     );
   }
-  async url(item: any, purpose: 'upload' | 'download', expiresAt: string) {
+  async downloadUrl(item: any, expiresAt: string) {
     const seconds = Math.min(
       this.config.SIGNED_URL_SECONDS,
       Math.floor((Date.parse(expiresAt) - Date.now()) / 1000),
     );
     assert(seconds > 0, 401, 'expired', 'Credential expires too soon');
     const expiry = Date.now() + seconds * 1000;
-    let url: string;
-    if (this.s3) {
-      const command =
-        purpose === 'upload'
-          ? new PutObjectCommand({
-              Bucket: this.config.S3_BUCKET,
-              Key: this.key(item.id),
-              ContentLength: item.size_bytes,
-              ChecksumSHA256: Buffer.from(item.sha256, 'hex').toString('base64'),
-              ServerSideEncryption: 'AES256',
-            })
-          : new GetObjectCommand({
-              Bucket: this.config.S3_BUCKET,
-              Key: this.key(item.id),
-              VersionId: item.object_version,
-              ResponseContentDisposition: `attachment; filename="${encodeURIComponent(item.name)}"`,
-            });
-      url = await getSignedUrl(this.s3, command, { expiresIn: seconds });
-    } else {
-      url = `${this.config.APP_ORIGIN}/v1/transfers/${item.id}?purpose=${purpose}&expires=${expiry}&signature=${this.signature(item.id, purpose, expiry)}`;
-    }
-    return {
-      url,
-      expires_at: new Date(expiry).toISOString(),
-      headers:
-        purpose === 'upload' && this.s3
-          ? {
-              'x-amz-checksum-sha256': Buffer.from(item.sha256, 'hex').toString('base64'),
-              'x-amz-server-side-encryption': 'AES256',
-            }
-          : {},
-    };
+    const url = this.s3
+      ? await getSignedUrl(
+          this.s3,
+          new GetObjectCommand({
+            Bucket: this.config.S3_BUCKET,
+            Key: this.key(item.id),
+            VersionId: item.object_version,
+            ResponseContentDisposition: `attachment; filename="${encodeURIComponent(item.name)}"`,
+          }),
+          { expiresIn: seconds },
+        )
+      : `${this.config.APP_ORIGIN}/v1/transfers/${item.id}?purpose=download&expires=${expiry}&signature=${this.signature(item.id, 'download', expiry)}`;
+    return { url, expires_at: new Date(expiry).toISOString(), headers: {} };
   }
   async receive(
     id: string,
     stream: Readable,
     expectedSize: number,
+    expectedSha256: string,
     canPublish?: () => Promise<boolean>,
   ) {
-    assert(!this.s3, 404, 'not_found', 'Use the S3 upload URL');
+    assert(!this.receiving.has(id), 429, 'upload_in_progress', 'Upload is already in progress');
     const temporary = path.join(this.directory, `.upload-${secret()}`);
     let bytes = 0;
+    const checksum = createHash('sha256');
     const limiter = new Transform({
       transform(chunk, _enc, cb) {
         bytes += chunk.length;
         if (bytes > expectedSize)
           cb(new ApiError(413, 'file_too_large', 'Upload exceeds declared size'));
-        else cb(null, chunk);
+        else {
+          checksum.update(chunk);
+          cb(null, chunk);
+        }
       },
     });
-    this.receiving.set(id, (this.receiving.get(id) || 0) + 1);
+    this.receiving.add(id);
     try {
       await mkdir(this.directory, { recursive: true, mode: 0o700 });
       await pipeline(stream, limiter, createWriteStream(temporary, { flags: 'wx', mode: 0o600 }));
       assert(bytes === expectedSize, 422, 'size_mismatch', 'Upload differs from declared size');
+      assert(
+        checksum.digest('hex') === expectedSha256,
+        422,
+        'checksum_mismatch',
+        'Upload SHA256 differs from reservation',
+      );
       assert(!canPublish || (await canPublish()), 409, 'upload_closed', 'Upload is no longer open');
-      try {
-        await link(temporary, this.localPath(id));
-      } catch (e: any) {
-        if (e.code === 'EEXIST')
-          throw new ApiError(
+      if (this.s3) {
+        const handle = await open(temporary, 'r');
+        const body = handle.createReadStream();
+        try {
+          await this.s3.send(
+            new PutObjectCommand({
+              Bucket: this.config.S3_BUCKET,
+              Key: this.key(id),
+              Body: body,
+              ContentLength: expectedSize,
+              ChecksumSHA256: Buffer.from(expectedSha256, 'hex').toString('base64'),
+              ServerSideEncryption: 'AES256',
+              IfNoneMatch: '*',
+            }),
+          );
+        } catch (error: any) {
+          if (error.$metadata?.httpStatusCode === 412) {
+            // A previous PUT may have succeeded before its response was lost.
+            const existing = await this.s3.send(
+              new HeadObjectCommand({
+                Bucket: this.config.S3_BUCKET,
+                Key: this.key(id),
+                ChecksumMode: 'ENABLED',
+              }),
+            );
+            assert(
+              existing.ContentLength === expectedSize &&
+                existing.ChecksumSHA256 === Buffer.from(expectedSha256, 'hex').toString('base64'),
+              409,
+              'immutable_object',
+              'Existing object differs from reservation',
+            );
+          } else {
+            throw new ApiError(
+              502,
+              error.name === 'AccessDenied' ? 'storage_access_denied' : 'storage_upload_failed',
+              'Server could not upload artifact to S3',
+            );
+          }
+        } finally {
+          const closed = finished(body).catch(() => {});
+          body.destroy();
+          await closed;
+        }
+      } else {
+        try {
+          await link(temporary, this.localPath(id));
+        } catch (error: any) {
+          if (error.code !== 'EEXIST') throw error;
+          const existing = await this.digest({ id });
+          assert(
+            existing.size_bytes === expectedSize && existing.sha256 === expectedSha256,
             409,
             'immutable_object',
-            'Upload already stored; complete it or reserve a new upload',
+            'Existing object differs from reservation',
           );
-        throw e;
+        }
       }
+      assert(!canPublish || (await canPublish()), 409, 'upload_closed', 'Upload is no longer open');
     } finally {
       await unlink(temporary).catch(() => {});
-      const remaining = this.receiving.get(id)! - 1;
-      if (remaining) this.receiving.set(id, remaining);
-      else this.receiving.delete(id);
+      this.receiving.delete(id);
     }
   }
   async remove(item: { id: string }) {

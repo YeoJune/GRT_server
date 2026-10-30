@@ -175,7 +175,7 @@ DB_SSL_CA_FILE=/absolute/path/to/rds-global-bundle.pem
 
 ### S3 설정
 
-현재 운영 파일은 서울 리전(`ap-northeast-2`)의 `grt-server` 버킷, `grt/` prefix에 저장합니다. Prepared·checkpoint·리포트·ZIP은 S3에서 직접 전송하며 EC2에는 SQLite·서버 코드·ZIP 임시 공간을 둡니다. [S3 이전 완료 기록](archive/20261028_s3_migration.md)을 보존하고 완료된 일회성 생성·이전 도구는 제거했습니다.
+현재 운영 파일은 서울 리전(`ap-northeast-2`)의 `grt-server` 버킷, `grt/` prefix에 저장합니다. Prepared·checkpoint·리포트는 EC2의 인증된 API로 업로드하고 서버가 검증 후 S3에 저장합니다. 다운로드는 S3에서 직접 전송하며 EC2에는 SQLite·서버 코드·업로드 및 ZIP 임시 공간을 둡니다. [S3 이전 완료 기록](archive/20261028_s3_migration.md)을 보존하고 완료된 일회성 생성·이전 도구는 제거했습니다.
 
 새 환경은 첫 실행 전에 비공개 범용 버킷에 Versioning·SSE-S3·퍼블릭 액세스 차단·ACL 비활성화를 적용하고 EC2 IAM Role을 연결합니다. Role에는 다음 권한을 부여합니다.
 
@@ -192,6 +192,12 @@ S3_PREFIX=grt/
 AWS SDK 기본 credential chain으로 EC2 Role을 사용합니다. 실행기에는 AWS 키를 전달하지 않습니다. S3는 사전 용량 할당이 없으며 초기 관리 기준은 **1TB = 1,000,000,000,000 bytes**입니다. 선택 설정 `S3_BUDGET_BYTES`로 표시 기준만 바꿀 수 있고, 초과해도 저장·과금은 계속됩니다. 기존 DB의 driver/bucket/prefix/region을 `.env`만 바꿔 전환하는 것은 차단하며 자동 이전은 제공하지 않습니다.
 
 검증한 VersionId만 다운로드하며 서명 URL은 최대 5분과 현재 인증 만료 중 짧은 값까지 유효합니다. 영구 삭제는 기존 URL 만료 후 해당 key의 모든 버전·delete marker를 제거합니다. Object Lock·권한 거부는 오류로 재시도합니다. 별도 복제본·백업은 앱의 삭제 대상이 아닙니다. 버전 만료·Glacier 전환 Lifecycle은 DB가 참조하는 파일을 없앨 수 있으므로 임의로 추가하지 않습니다.
+
+실행기는 `PUT /v1/artifacts/uploads/{id}/content`에 write 토큰과 원본 bytes를 보냅니다. EC2는 메모리에 파일 전체를 올리지 않고 `STORAGE_DIRECTORY`의 임시 파일로 스트리밍하며 크기·SHA256·현재 업로드 권한을 확인합니다. 이후 EC2 Role의 AWS SDK로 checksum·SSE-S3·조건부 생성(`If-None-Match: *`)을 적용해 S3에 저장합니다. 기존 객체가 있으면 크기·checksum이 일치할 때만 재시도를 성공으로 처리하고 덮어쓰지 않습니다. 성공·실패·연결 중단 시 임시 파일을 정리합니다.
+
+업로드와 ZIP 작업이 겹칠 때 필요한 EC2 디스크 여유를 확보하세요. 같은 artifact의 동시 업로드는429로 재시도하며, 디스크 부족이나 S3 전송 실패를 성공으로 처리하지 않습니다. 비정상 프로세스 강제 종료로 남은 `.upload-*` 파일은 실행 중인 업로드가 없는지 확인한 뒤 운영자가 정리합니다. S3 다운로드 서명·VersionId 검증과 저장소 이전 이력은 유지합니다.
+
+이 변경은 GRT_server와 GRT client를 함께 업데이트해야 합니다. 서버는 [업데이트 절차](#업데이트와-점검)로 반영하고, 노트북은 최신 GRT로 새 job을 시작합니다. 이전 commit에 고정된 job의 client는 기존 직접 업로드 방식을 사용하므로 그대로 재개하지 않습니다. 운영 서버의 AWS 권한이나 배포는 코드 push만으로 변경되지 않습니다.
 
 파일 기본 한도는 1GiB(`MAX_ARTIFACT_BYTES`), ZIP 원본 합계는 2GiB(`MAX_EXPORT_BYTES`)입니다. 1TB 관리 기준과 별개입니다. 현재 단일 PUT 방식이므로 S3의 단일 요청 크기 한도도 지켜야 합니다.
 

@@ -67,7 +67,7 @@ sh scripts/update.sh
 
 HTTPS·systemd·업데이트·백업/복원·선택 DB/S3 설정은 [운영 문서](docs/operations.md), 내부 구성은 [구현 구조](docs/architecture.md)에 정리했습니다.
 
-운영 파일은 [S3 설정](docs/operations.md#s3-설정)을 사용합니다. Prepared·checkpoint·리포트·ZIP을 S3에 저장하고 직접 전송하며, EC2에는 DB·서버 코드·ZIP 임시 파일을 둡니다. 초기 S3 관리 기준은 1TB이며 사전 할당이나 저장 제한은 아닙니다. 사용량은 설정 → 저장공간 또는 `npm run cli -- storage usage`로 확인합니다.
+운영 파일은 [S3 설정](docs/operations.md#s3-설정)을 사용합니다. Prepared·checkpoint·리포트 업로드는 인증된 EC2 API가 파일을 임시 수신·검증한 뒤 AWS SDK로 S3에 저장합니다. 다운로드는 S3 서명 URL을 사용하며, EC2에는 DB·서버 코드와 업로드·ZIP 임시 공간을 둡니다. 초기 S3 관리 기준은 1TB이며 사전 할당이나 저장 제한은 아닙니다. 사용량은 설정 → 저장공간 또는 `npm run cli -- storage usage`로 확인합니다.
 
 S3 이전과 로컬 복사본 정리는 완료했으며 일회성 실행 도구는 제거했습니다. [완료 기록](docs/archive/20261028_s3_migration.md)은 아카이브에 보존합니다.
 

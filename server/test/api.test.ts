@@ -113,9 +113,15 @@ async function upload(
   const url = new URL(reserve.body.upload.url);
   const put = await request(system.app)
     .put(url.pathname + url.search)
+    .set('Authorization', `Bearer ${write}`)
     .set('Content-Type', 'application/octet-stream')
     .send(bytes);
-  assert.equal(put.status, 204, JSON.stringify(put.body));
+  assert.equal(
+    put.status,
+    expectedHash && expectedHash !== hash(bytes) ? 422 : 204,
+    JSON.stringify(put.body),
+  );
+  if (put.status !== 204) return reserve.body;
   const complete = await call('post', `/artifacts/uploads/${reserve.body.id}/complete`, {});
   assert.equal(complete.status, 202);
   return reserve.body;
@@ -536,12 +542,13 @@ test('file transfer verifies SHA256, immutable bytes, and read-only downloads', 
   assert.equal((await request(system.app).get(malformed.pathname + malformed.search)).status, 401);
   const failed = await upload('dataset', bytes, undefined, undefined, '0'.repeat(64));
   await system.background.tick();
-  assert.equal((await db.get('artifacts', failed.id))!.status, 'failed');
+  assert.equal((await db.get('artifacts', failed.id))!.status, 'reserved');
   const url = new URL(a.upload.url);
   assert.equal(
     (
       await request(system.app)
         .put(url.pathname + url.search)
+        .set('Authorization', `Bearer ${write}`)
         .send(bytes)
     ).status,
     409,
@@ -924,7 +931,7 @@ test('permanent deletion removes output bytes and ZIPs, survives cleanup failure
   assert.equal((await call('patch', `/jobs/${job.id}`, { name: 'resurrect' })).status, 409);
   assert.equal((await call('post', `/jobs/${job.id}/actions`, { action: 'retry' })).status, 409);
 
-  system.storage.receiving.set(file.id, 1);
+  system.storage.receiving.add(file.id);
   await system.background.tick();
   assert.ok(await db.get('jobs', job.id));
   system.storage.receiving.delete(file.id);

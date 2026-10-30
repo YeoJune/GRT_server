@@ -34,6 +34,7 @@ export function experimentRoutes(db: Database, c: Config) {
       heartbeat_seconds: c.HEARTBEAT_SECONDS,
       lease_seconds: c.LEASE_SECONDS,
       storage: c.STORAGE_DRIVER,
+      artifact_upload: 'server',
       runners: ['generic/1'],
       schema_dialect: 'draft-07',
       features: {

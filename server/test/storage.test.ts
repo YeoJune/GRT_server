@@ -9,7 +9,68 @@ import { diskUsage } from '../src/routes/storage.js';
 import { createDatabase } from '../src/db/index.js';
 import { ensureStorage } from '../src/services/storage-state.js';
 import * as initial from '../src/db/migrations/001_initial.js';
-import { now } from '../src/util.js';
+import { hash, now } from '../src/util.js';
+
+test('S3 uploads stage and verify bytes before SDK PUT, clean up and recover lost responses', async () => {
+  const { PutObjectCommand, HeadObjectCommand } = await import('@aws-sdk/client-s3');
+  const directory = await mkdtemp(path.join(tmpdir(), 'grt-s3-upload-'));
+  const storage = new Storage(
+    loadConfig({
+      NODE_ENV: 'test',
+      STORAGE_DRIVER: 's3',
+      S3_BUCKET: 'example-only-bucket',
+      STORAGE_DIRECTORY: directory,
+      STORAGE_SIGNING_KEY: 'test-key-'.repeat(8),
+    }),
+  );
+  const bytes = Buffer.from('original uploaded bytes');
+  let stored: Buffer | undefined;
+  let calls = 0;
+  (storage as any).s3 = {
+    send: async (command: any) => {
+      if (command instanceof HeadObjectCommand)
+        return {
+          ContentLength: stored!.length,
+          ChecksumSHA256: Buffer.from(hash(stored!), 'hex').toString('base64'),
+          VersionId: 'v1',
+        };
+      assert.ok(command instanceof PutObjectCommand);
+      calls++;
+      assert.equal(command.input.IfNoneMatch, '*');
+      assert.equal(command.input.ServerSideEncryption, 'AES256');
+      assert.equal(
+        command.input.ChecksumSHA256,
+        Buffer.from(hash(bytes), 'hex').toString('base64'),
+      );
+      assert.equal((await readdir(directory)).length, 1); // fully staged on EC2
+      if (stored) throw { $metadata: { httpStatusCode: 412 } };
+      const chunks: Buffer[] = [];
+      for await (const chunk of command.input.Body) chunks.push(chunk);
+      stored = Buffer.concat(chunks);
+      throw new Error('lost SDK response after successful PUT');
+    },
+  };
+  const { Readable } = await import('node:stream');
+  try {
+    await assert.rejects(
+      storage.receive('art_example', Readable.from([bytes]), bytes.length, '0'.repeat(64)),
+      { code: 'checksum_mismatch' },
+    );
+    assert.equal(calls, 0);
+    await assert.rejects(
+      storage.receive('art_example', Readable.from([bytes]), bytes.length, hash(bytes)),
+      { code: 'storage_upload_failed' },
+    );
+    assert.deepEqual(await readdir(directory), []);
+    await storage.receive('art_example', Readable.from([bytes]), bytes.length, hash(bytes));
+    assert.equal(calls, 2);
+    assert.deepEqual(stored, bytes);
+    assert.deepEqual(await readdir(directory), []);
+    assert.equal(storage.receiving.size, 0);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
 
 test('local exports publish complete immutable bytes, including across filesystems', async () => {
   const source = await mkdtemp(path.join(tmpdir(), 'grt-export-source-'));
@@ -59,7 +120,13 @@ test('revoked uploads cannot publish bytes and local deletion is idempotent', as
   );
   try {
     await assert.rejects(
-      storage.receive('art_revoked', Readable.from([Buffer.from('bytes')]), 5, async () => false),
+      storage.receive(
+        'art_revoked',
+        Readable.from([Buffer.from('bytes')]),
+        5,
+        hash('bytes'),
+        async () => false,
+      ),
       { code: 'upload_closed' },
     );
     assert.equal(storage.receiving.size, 0);

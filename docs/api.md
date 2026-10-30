@@ -150,6 +150,8 @@ Policy는 `max_attempt_seconds,eta_seconds,checkpointable,preflight_seconds,requ
 
 ## 파일 업로드 / 완료 검증
 
+`GET /capabilities`의 `artifact_upload=server`가 인증된 EC2 업로드 경로를 나타냅니다. GRT client는 이 값이 없으면 학습 전에 `server_upload_required`로 중단하므로 서버를 먼저 업데이트하세요.
+
 예약:
 
 ```http
@@ -173,7 +175,9 @@ Idempotency-Key: <uuid>
 
 Kind는 report/config/provenance/checkpoint/log/result/dataset입니다. Dataset은 공유 입력으로 job_id/attempt_id 없이 등록합니다. 출력 파일은 현재 running attempt에 연결해야 합니다. 파일명은 경로가 아닌 단일 이름입니다.
 
-응답의 `upload.url`에 **Bearer 헤더 없이** 원본 bytes를 PUT합니다. S3일 때는 `upload.headers`도 함께 전달합니다. `POST /artifacts/uploads`에 `{upload_id}`를 보내 같은 예약의 URL을 갱신합니다.
+응답의 `upload.url`은 EC2 API의 `PUT /artifacts/uploads/{id}/content`입니다. write 권한의 **Bearer 헤더와 `Content-Type: application/octet-stream`**으로 원본 bytes를 보냅니다. 브라우저 cookie 인증은 기존 Origin·CSRF 검사를 적용합니다. 업로드 URL에 S3 자격증명이나 서명 query는 없습니다. `POST /artifacts/uploads`에 `{upload_id}`를 보내 같은 예약의 업로드 주소를 다시 조회할 수 있습니다.
+
+서버는 JSON parser 전에 raw body를 임시 파일로 스트리밍하고 예약 크기·SHA256·현재 attempt/권한을 확인한 뒤 SDK로 S3에 저장합니다. 전송이 끝나야204를 반환합니다. 크기/hash 불일치는422, 닫힌 예약이나 stale attempt는409, 동일 파일의 업로드 진행 중이면429입니다. 동일 bytes의 재전송은 기존 객체를 덮어쓰지 않고 성공하며, 클라이언트는429/5xx/응답 유실을 재시도할 수 있습니다. S3 장애는 `storage_upload_failed`, S3 AccessDenied는 `storage_access_denied`(502)로 반환합니다. 입력 bytes가 예약보다 많거나 전송이 끊어지면 연결이 종료될 수도 있으며 원본은 발행하지 않습니다.
 
 이후 `POST /artifacts/uploads/{id}/complete`에 `{}`와 Idempotency-Key를 보내고 `GET /artifacts/uploads/{id}`를 poll합니다. 202 verifying 후 실제 크기와 SHA256이 일치해야 verified입니다. 실패한 파일은 새 예약으로 다시 업로드합니다. ETag는 hash로 사용하지 않습니다.
 

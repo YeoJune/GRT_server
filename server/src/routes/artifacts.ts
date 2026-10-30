@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod/v3';
 import type { Database } from '../db/index.js';
 import type { Config } from '../config.js';
-import { writeOnly } from '../auth.js';
+import { authentication, writeOnly } from '../auth.js';
 import { mutation } from '../idempotency.js';
 import { assert, canonical, hash, id, now, secondsFromNow } from '../util.js';
 import { name } from '../validation.js';
@@ -10,6 +10,11 @@ import type { Storage } from '../services/storage.js';
 
 export function artifactRoutes(db: Database, c: Config, storage: Storage) {
   const r = Router();
+  const uploadLink = (a: any, expires_at: string) => ({
+    url: `${c.APP_ORIGIN}/v1/artifacts/uploads/${a.id}/content`,
+    expires_at,
+    headers: { 'Content-Type': 'application/octet-stream' },
+  });
   const prepared = (a: any) =>
     a.kind === 'dataset' &&
     a.status === 'verified' &&
@@ -52,7 +57,7 @@ export function artifactRoutes(db: Database, c: Config, storage: Storage) {
         'upload_closed',
         'Only reserved uploads can refresh URLs',
       );
-      return res.json({ ...a, upload: await storage.url(a, 'upload', req.auth.expires_at) });
+      return res.json({ ...a, upload: uploadLink(a, req.auth.expires_at) });
     }
     const input = uploadInput.parse(req.body);
     await mutation(
@@ -122,7 +127,7 @@ export function artifactRoutes(db: Database, c: Config, storage: Storage) {
         });
         return {
           status: 201,
-          body: { ...a, upload: await storage.url(a, 'upload', req.auth.expires_at) },
+          body: { ...a, upload: uploadLink(a, req.auth.expires_at) },
         };
       },
       { required: true },
@@ -145,6 +150,12 @@ export function artifactRoutes(db: Database, c: Config, storage: Storage) {
         const a = await tx.get('artifacts', String(req.params.id));
         assert(a, 404, 'not_found', 'Upload not found');
         if (a.status === 'verified') return { body: a };
+        assert(
+          !storage.receiving.has(a.id),
+          429,
+          'upload_in_progress',
+          'Upload is still in progress',
+        );
         assert(
           ['reserved', 'verifying'].includes(a.status),
           409,
@@ -170,7 +181,7 @@ export function artifactRoutes(db: Database, c: Config, storage: Storage) {
       artifact_id: a.id,
       sha256: a.sha256,
       size_bytes: a.size_bytes,
-      ...(await storage.url(a, 'download', req.auth.expires_at)),
+      ...(await storage.downloadUrl(a, req.auth.expires_at)),
     });
   });
   r.post('/exports', async (req, res) => {
@@ -268,7 +279,7 @@ export function artifactRoutes(db: Database, c: Config, storage: Storage) {
     res.json({
       ...e,
       ...(e.status === 'ready'
-        ? { download: await storage.url(e, 'download', req.auth.expires_at) }
+        ? { download: await storage.downloadUrl(e, req.auth.expires_at) }
         : {}),
     });
   });
@@ -276,11 +287,11 @@ export function artifactRoutes(db: Database, c: Config, storage: Storage) {
 }
 export function transferRoutes(db: Database, storage: Storage) {
   const r = Router();
-  r.all('/transfers/:id', async (req, res, next) => {
-    assert(storage.config.STORAGE_DRIVER === 'local', 404, 'not_found', 'Use S3 transfer URLs');
+  r.get('/transfers/:id', async (req, res, next) => {
+    assert(storage.config.STORAGE_DRIVER === 'local', 404, 'not_found', 'Use S3 download URLs');
     const q = z
       .object({
-        purpose: z.enum(['upload', 'download']),
+        purpose: z.literal('download'),
         expires: z.string(),
         signature: z.string(),
       })
@@ -291,32 +302,57 @@ export function transferRoutes(db: Database, storage: Storage) {
       (await db.get('artifacts', String(req.params.id))) ||
       (await db.get('exports', String(req.params.id)));
     assert(a, 404, 'not_found', 'File not found');
-    if (q.purpose === 'upload') {
-      assert(req.method === 'PUT', 405, 'method_not_allowed', 'Use PUT');
-      assert(a.status === 'reserved', 409, 'upload_closed', 'Upload is no longer open');
-      if (req.headers['content-length'])
-        assert(
-          Number(req.headers['content-length']) === a.size_bytes,
-          422,
-          'size_mismatch',
-          'Content-Length differs from declared size',
-        );
-      await storage.receive(
-        a.id,
-        req,
-        a.size_bytes,
-        async () => (await db.get('artifacts', a.id))?.status === 'reserved',
+    assert(req.method === 'GET', 405, 'method_not_allowed', 'Use GET');
+    assert(['verified', 'ready'].includes(a.status), 409, 'not_verified', 'File is not verified');
+    if (a.expires_at)
+      assert(Date.parse(a.expires_at) > Date.now(), 410, 'export_expired', 'Export expired');
+    res.download(storage.localPath(a.id), a.name, (e) => {
+      if (e) next(e);
+    });
+  });
+  return r;
+}
+
+// Registered before express.json(): artifact bodies are bounded file streams.
+export function uploadRoutes(db: Database, c: Config, storage: Storage) {
+  const r = Router();
+  r.put('/artifacts/uploads/:id/content', authentication(db, c), writeOnly, async (req, res) => {
+    const a = await db.get('artifacts', String(req.params.id));
+    assert(a, 404, 'not_found', 'Upload not found');
+    const canPublish = async () => {
+      if (Date.parse(req.auth.expires_at) <= Date.now()) return false;
+      if (req.auth.session_id && !(await db.get('sessions', req.auth.session_id))) return false;
+      if (req.auth.token_id) {
+        const token = await db.get('tokens', req.auth.token_id);
+        if (!token || token.revoked_at || Date.parse(token.expires_at) <= Date.now()) return false;
+      }
+      const current = await db.get('artifacts', a.id);
+      if (current?.status !== 'reserved') return false;
+      if (a.kind === 'dataset') return true;
+      const job = await db.get('jobs', a.job_id);
+      const attempt = await db.get('attempts', a.attempt_id);
+      return (
+        job?.status === 'running' &&
+        job.active_attempt_id === a.attempt_id &&
+        attempt?.status === 'running'
       );
-      res.status(204).end();
-    } else {
-      assert(req.method === 'GET', 405, 'method_not_allowed', 'Use GET');
-      assert(['verified', 'ready'].includes(a.status), 409, 'not_verified', 'File is not verified');
-      if (a.expires_at)
-        assert(Date.parse(a.expires_at) > Date.now(), 410, 'export_expired', 'Export expired');
-      res.download(storage.localPath(a.id), a.name, (e) => {
-        if (e) next(e);
-      });
-    }
+    };
+    assert(await canPublish(), 409, 'upload_closed', 'Upload is no longer open');
+    assert(
+      a.size_bytes <= c.MAX_ARTIFACT_BYTES,
+      413,
+      'file_too_large',
+      'Upload exceeds size limit',
+    );
+    if (req.headers['content-length'])
+      assert(
+        Number(req.headers['content-length']) === a.size_bytes,
+        422,
+        'size_mismatch',
+        'Content-Length differs from reservation',
+      );
+    await storage.receive(a.id, req, a.size_bytes, a.sha256, canPublish);
+    res.status(204).end();
   });
   return r;
 }

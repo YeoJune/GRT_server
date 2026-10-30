@@ -11,7 +11,7 @@ import { ApiError, id } from './util.js';
 import { authentication } from './auth.js';
 import { loginRoutes, accountRoutes } from './routes/account.js';
 import { experimentRoutes } from './routes/experiments.js';
-import { artifactRoutes, transferRoutes } from './routes/artifacts.js';
+import { artifactRoutes, transferRoutes, uploadRoutes } from './routes/artifacts.js';
 import { providerRoutes } from './routes/providers.js';
 import { storageRoutes } from './routes/storage.js';
 import { Storage } from './services/storage.js';
@@ -36,10 +36,10 @@ export function createApp(db: Database, c: Config) {
     await db.sql.raw('select 1');
     res.json({ status: 'ok' });
   });
-  // Stream raw file transfers before the JSON parser; signed URLs are short-lived credentials.
-  app.use('/v1', transferRoutes(db, storage));
-  app.use(express.json({ limit: c.MAX_JSON_BYTES }));
   app.use(cookieParser());
+  // Raw uploads authenticate before streaming; JSON evidence must not enter express.json().
+  app.use('/v1', transferRoutes(db, storage), uploadRoutes(db, c, storage));
+  app.use(express.json({ limit: c.MAX_JSON_BYTES }));
   app.use('/v1', loginRoutes(db, c));
   app.use(
     '/v1',
