@@ -32,9 +32,9 @@ DB 변경은 Knex migration으로 관리합니다. SQLite는 WAL + 단일 연결
 
 ## 상태 전이
 
-`queued → running → finalizing → succeeded`가 정상 흐름입니다. 예외 상태는 `failed`, `interrupted`, `cancelled`입니다. Heartbeat lease가 끊겨도 job을 자동 재배정하지 않습니다. `GET /jobs/{id}`의 attempt에 `stale=true`를 표시하고, retry에는 종료 근거가 필요합니다.
+`queued → running → finalizing → succeeded`가 정상 흐름입니다. 예외 상태는 `failed`, `interrupted`, `cancelled`입니다. Heartbeat lease 또는 hard deadline이 만료되면 서버가 해당 attempt와 job을 interrupted로 종료하고 worker 소유권을 해제합니다(취소 요청 중이면cancelled). 자동 재배정은 하지 않으며, 만료된 lease의 heartbeat·finish는409로 거부합니다. 프로세스 자체가 종료됐는지는 별개이므로 재개 전 이전 런타임 종료를 확인합니다.
 
-Finish는 generation과 필수 파일 ID·manifest를 고정하고 202를 반환합니다. 이후에는 worker heartbeat가 없어도 서버가 검증하며, token이 만료되어도 이미 받은 검증은 계속됩니다. 재시작 시 DB의 verifying / finalizing / preparing 항목을 다시 처리합니다.
+Finish는 generation과 필수 파일 ID·manifest를 고정하고 202를 반환합니다. Worker가 확인한 실패는 별도 파일 업로드 없이 먼저 failed 종료를 요청할 수 있습니다. GRT WikiText schema의 RMT/NeoX는 posthoc을 정상 스킵하며, GRT나 다른 generic runner의 필수 분석 검증은 유지합니다. 이후에는 worker heartbeat가 없어도 서버가 검증하며, token이 만료되어도 이미 받은 검증은 계속됩니다. 재시작 시 DB의 verifying / finalizing / preparing 항목을 다시 처리합니다.
 
 `generic/1`은 config 파일의 hash·resolved spec 필드 일치, provenance의 spec/config/runner, report schema·spec hash·완료 step, 필수 posthoc 선언을 검증합니다. `spec.target_steps`는 양의 정수여야 합니다. 과학적 학습 결과의 진실성이나 GRT budget/world size 의미까지 증명하는 검증기가 아닙니다. 전용 runner를 추가하기 전 `grt/1`은 거부합니다.
 

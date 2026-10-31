@@ -462,47 +462,34 @@ function workerInputFor(w: any) {
   );
 }
 
-test('lease owner can reconnect after expiry; stale retry requires termination evidence and fences old generation', async () => {
-  const { worker, job, assignment } = await attached('stale');
-  const heartbeat = {
-    ...lease(assignment, worker),
-    stage: 'training',
-    progress: { current: 5, total: null, unit: 'step' },
-  };
-  assert.equal(
-    (
-      await call('post', `/attempts/${assignment.attempt_id}/heartbeat`, {
-        ...heartbeat,
-        lease_token: 'x'.repeat(40),
-      })
-    ).status,
-    409,
-  );
+test('expired heartbeat interrupts the attempt without reassignment and fences the old worker', async () => {
+  const { worker, job, assignment } = await attached('expired-lease');
+  const heartbeat = { ...lease(assignment, worker), stage: 'training' };
   await db.write(async (tx) => {
     const a = (await tx.get('attempts', assignment.attempt_id))!;
     await tx.put('attempts', { ...a, lease_expires_at: secondsFromNow(-1) });
   });
+  assert.equal(
+    (await call('post', `/attempts/${assignment.attempt_id}/heartbeat`, heartbeat)).body.code,
+    'lease_expired',
+  );
+  await system.background.tick();
+  const ended = (await db.get('jobs', job.id))!;
+  assert.equal(ended.status, 'interrupted');
+  assert.equal(ended.validation_error.code, 'worker_lease_expired');
+  assert.equal(ended.active_attempt_id, null);
+  assert.equal((await db.get('workers', worker.id))!.active_attempt_id, null);
+  assert.equal((await db.get('attempts', assignment.attempt_id))!.status, 'interrupted');
   assert.equal(
     (await call('post', `/attempts/${assignment.attempt_id}/heartbeat`, heartbeat)).status,
-    200,
+    409,
   );
-  await db.write(async (tx) => {
-    const a = (await tx.get('attempts', assignment.attempt_id))!;
-    await tx.put('attempts', { ...a, lease_expires_at: secondsFromNow(-1) });
-  });
-  assert.equal((await call('post', `/jobs/${job.id}/actions`, { action: 'retry' })).status, 422);
-  const retry = await call('post', `/jobs/${job.id}/actions`, {
-    action: 'retry',
-    termination_evidence: 'Notebook runtime was deleted; verified by owner.',
-  });
+  const retry = await call('post', `/jobs/${job.id}/actions`, { action: 'retry' });
   assert.equal(retry.status, 200);
   assert.equal(retry.body.status, 'queued');
   assert.equal(
     (await call('post', `/attempts/${assignment.attempt_id}/heartbeat`, heartbeat)).status,
     409,
-  );
-  assert.ok(
-    (await db.list('audit')).some((a) => a.action === 'job.retry' && a.termination_evidence),
   );
 });
 
@@ -1044,4 +1031,114 @@ test('resume requires a verified snapshot and termination; fresh retry clears th
   const freshClaim = await call('post', `/workers/${worker.id}/claim`, { queue: queue.name });
   assert.equal(freshClaim.body.resume_mode, 'fresh');
   assert.deepEqual(freshClaim.body.resume_artifact_ids, []);
+});
+
+for (const model of ['neox', 'rmt', 'grt']) {
+  test(`GRT posthoc requirement applies to ${model} correctly, including existing jobs`, async () => {
+    if (!(await db.get('schemas', 'grt_wikitext_v1'))) {
+      const registered = await call('post', '/schemas', {
+        id: 'grt_wikitext_v1',
+        name: 'GRT models',
+        runner: 'generic/1',
+        json_schema: { type: 'object', additionalProperties: true },
+        report_schema: { type: 'object', additionalProperties: true },
+      });
+      assert.equal(registered.status, 201);
+    }
+    const worker = await newWorker({ schema_ids: ['grt_wikitext_v1'] });
+    const created = await call(
+      'post',
+      '/jobs',
+      jobBody('posthoc-' + model, {
+        schema_id: 'grt_wikitext_v1',
+        dispatch: 'attached',
+        worker_id: worker.id,
+        spec: {
+          target_steps: 100,
+          config: { model: { name: model } },
+          posthoc_options: { slots: true },
+        },
+        policy: { require_posthoc: true, checkpointable: true },
+      }),
+    );
+    assert.equal(created.status, 201, JSON.stringify(created.body));
+    const assignment = created.body.assignment;
+    const job = (await db.get('jobs', created.body.id))!;
+    assert.equal(job.policy.require_posthoc, model === 'grt');
+    // Pre-fix baseline jobs may already contain the inappropriate required flag.
+    await db.write((tx) =>
+      tx.put('jobs', { ...job, policy: { ...job.policy, require_posthoc: true } }),
+    );
+    const config = await upload(
+      'config',
+      Buffer.from(JSON.stringify(job.spec)),
+      job,
+      assignment.attempt_id,
+    );
+    const evidence = { spec_sha256: job.spec_sha256, config_sha256: config.sha256 };
+    const report = await upload(
+      'report',
+      Buffer.from(JSON.stringify({ ...evidence, completed_steps: 100, posthoc_completed: false })),
+      job,
+      assignment.attempt_id,
+    );
+    const provenance = await upload(
+      'provenance',
+      Buffer.from(JSON.stringify({ ...evidence, runner: 'generic/1' })),
+      job,
+      assignment.attempt_id,
+    );
+    const finished = await call('post', `/attempts/${assignment.attempt_id}/finish`, {
+      ...lease(assignment, worker),
+      outcome: 'completed',
+      stage: 'uploading',
+      artifact_ids: [config.id, report.id, provenance.id],
+      manifest: { ...evidence, completed_steps: 100, target_steps: 100, posthoc_completed: false },
+    });
+    assert.equal(finished.status, 202);
+    await system.background.tick();
+    const done = (await db.get('jobs', job.id))!;
+    assert.equal(done.status, model === 'grt' ? 'failed' : 'succeeded');
+    if (model === 'grt') assert.equal(done.validation_error.code, 'posthoc_incomplete');
+    else assert.equal(done.summary.posthoc_status, 'skipped');
+  });
+}
+
+test('lease expiry is processed while artifact verification is still busy', async () => {
+  const { job, assignment } = await attached('busy-storage-lease');
+  const artifact = await upload('dataset', Buffer.from('slow verification bytes'));
+  const originalDigest = system.storage.digest;
+  let release!: () => void;
+  let started!: () => void;
+  const blocked = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const entered = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  system.storage.digest = async (item) => {
+    if (item.id === artifact.id) {
+      started();
+      await blocked;
+    }
+    return originalDigest.call(system.storage, item);
+  };
+  const first = system.background.tick();
+  let second: Promise<void> | undefined;
+  try {
+    await entered;
+    await db.write(async (tx) => {
+      const attempt = (await tx.get('attempts', assignment.attempt_id))!;
+      await tx.put('attempts', { ...attempt, lease_expires_at: secondsFromNow(-1) });
+    });
+    second = system.background.tick();
+    // The DB transaction queues behind the lease sweep, independent of the blocked digest.
+    const ended = await db.write((tx) => tx.get('jobs', job.id));
+    assert.equal(ended!.status, 'interrupted');
+  } finally {
+    release();
+    await first;
+    await second;
+    system.storage.digest = originalDigest;
+  }
 });

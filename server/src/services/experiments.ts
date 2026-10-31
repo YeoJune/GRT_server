@@ -16,6 +16,11 @@ export function compileSchema(schema: any) {
     assert(false, 422, 'invalid_schema', 'Invalid JSON Schema (draft-07, strict mode)');
   }
 }
+export function posthocApplies(job: any): boolean {
+  return (
+    job.schema_id !== 'grt_wikitext_v1' || !['neox', 'rmt'].includes(job.spec.config?.model?.name)
+  );
+}
 export async function validateJob(tx: Store, raw: any) {
   const input = jobInput.parse(raw);
   assert(
@@ -44,6 +49,7 @@ export async function validateJob(tx: Store, raw: any) {
       'Spec does not match schema',
       validate.errors?.map((e) => ({ path: e.instancePath, message: e.message })) || [],
     );
+  input.policy.require_posthoc = input.policy.require_posthoc && posthocApplies({ ...input, spec });
   // Field-level schema errors are preserved by the validate endpoint/HTTP handler.
   const settings = await tx.get('settings', 'settings');
   input.spec = spec;
@@ -186,10 +192,12 @@ export async function ownership(tx: Store, attemptId: string, input: any) {
     'Worker or lease does not own this attempt',
   );
   assert(a.status === 'running', 409, 'attempt_closed', 'Attempt no longer accepts worker updates');
-  // An expired lease can be renewed only by its original holder, before hard deadline,
-  // and only if cancellation has not superseded it. It never permits a second process.
-  if (Date.parse(a.lease_expires_at) <= Date.now())
-    assert(!job.cancel_requested, 409, 'stale_cancelled', 'Expired cancelled attempt must stop');
+  assert(
+    Date.parse(a.lease_expires_at) > Date.now() && Date.parse(a.deadline_at) > Date.now(),
+    409,
+    'lease_expired',
+    'Worker lease expired; start a new attempt',
+  );
   return { attempt: a, job };
 }
 export function attemptView(a: RecordData) {

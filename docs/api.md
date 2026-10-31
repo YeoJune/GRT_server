@@ -86,7 +86,7 @@ Cookie 세션은 기본 절대 8시간 / idle 30분입니다. Token session은 �
 
 W&B 링크는 `summary.wandb_url`에 저장하며 HTTPS `wandb.ai` URL을 사용합니다. 실험 수정으로 기존 실행의 링크도 등록·해제할 수 있습니다. GRT는 online run 링크를 heartbeat와 완료 시 자동 전송합니다.
 
-Queued 취소는 즉시 cancelled, running 취소는 cancel_requested만 기록합니다. Stale running retry는 lease 만료와 10자 이상 종료 근거가 필요합니다. 근거는 사람이 이전 process/runtime 종료를 확인한 기록입니다. 서버가 단순 timeout을 종료 증거로 간주하지 않습니다. Failed/interrupted/cancelled는 이미 finish되었으므로 별도 근거 없이 retry할 수 있습니다. Resume은 `grt.resume/1`의 같은 job·verified snapshot을 선택해 새 attempt에 연결합니다. `checkpoint_artifact_id`로 지정하거나 최신 보존 snapshot을 선택합니다. 없으면 409 resume_checkpoint_missing입니다. Stale running의 lease·종료 근거 검사는 retry와 같습니다. Claim의 resume_mode=checkpoint, resume_artifact_ids를 사용하고 worker가 Config·manifest·world size·last/best 관계를 확인합니다. Resume 후 각 attempt에 원본 artifact ID를 보존합니다.
+Queued 취소는 즉시 cancelled, running 취소는 cancel_requested만 기록합니다. Heartbeat lease가 만료되면 background 처리가 job/attempt를 interrupted(취소 요청 중이면cancelled)로 종료하고 worker 소유권을 해제합니다. 자동 재실행은 하지 않습니다. Stale running retry는 lease 만료와 10자 이상 종료 근거가 필요합니다. 근거는 사람이 이전 process/runtime 종료를 확인한 기록입니다. 서버가 단순 timeout을 종료 증거로 간주하지 않습니다. Failed/interrupted/cancelled는 새 attempt로 retry할 수 있습니다. Lease 유실은 프로세스 강제 종료를 뜻하지 않으므로 이전 런타임 종료를 확인하세요. Resume은 `grt.resume/1`의 같은 job·verified snapshot을 선택해 새 attempt에 연결합니다. `checkpoint_artifact_id`로 지정하거나 최신 보존 snapshot을 선택합니다. 없으면 409 resume_checkpoint_missing입니다. Stale running의 lease·종료 근거 검사는 retry와 같습니다. Claim의 resume_mode=checkpoint, resume_artifact_ids를 사용하고 worker가 Config·manifest·world size·last/best 관계를 확인합니다. Resume 후 각 attempt에 원본 artifact ID를 보존합니다.
 
 Clone은 새로운 job을 만들며 overrides는 다시 schema 검증합니다.
 
@@ -137,7 +137,7 @@ Policy는 `max_attempt_seconds,eta_seconds,checkpointable,preflight_seconds,requ
 }
 ```
 
-`POST /attempts/{id}/heartbeat`의 command는 continue/cancel/drain입니다. Stage는 preparing/preflight/training/posthoc/uploading입니다. Total/ETA 미측정은 null을 사용합니다. `last_verified_checkpoint_id`는 해당 attempt의 verified checkpoint만 허용합니다.
+`POST /attempts/{id}/heartbeat`의 command는 continue/cancel/drain입니다. Stage는 preparing/preflight/training/posthoc/uploading입니다. 만료된 lease는409 lease_expired이며 원래 worker도 갱신할 수 없습니다. 같은 실행의 새 attempt로 재개해야 합니다. Total/ETA 미측정은 null을 사용합니다. `last_verified_checkpoint_id`는 해당 attempt의 verified checkpoint만 허용합니다.
 
 | 경로                         | 의미                                                 |
 | ---------------------------- | ---------------------------------------------------- |
@@ -172,6 +172,8 @@ Idempotency-Key: <uuid>
   "extensions": {}
 }
 ```
+
+GRT WikiText schema에서 RMT/NeoX의 require_posthoc은false로 정규화하며 완료 시 summary.posthoc_status=skipped를 기록합니다. 이전 job의 불필요한 필수 플래그도 baseline 완료를 막지 않습니다. GRT와 다른 generic schema의 필수 분석 검증은 유지합니다.
 
 Kind는 report/config/provenance/checkpoint/log/result/dataset입니다. Dataset은 공유 입력으로 job_id/attempt_id 없이 등록합니다. 출력 파일은 현재 running attempt에 연결해야 합니다. 파일명은 경로가 아닌 단일 이름입니다.
 

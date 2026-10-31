@@ -139,8 +139,8 @@ Windows에서는 WSL을 사용하거나 가상환경에서 같은 Python 명령�
 
 ## Kaggle/Colab 중단 후 재개
 
-1. 이전 런타임의 종료를 확인합니다. Stale running이면 lease 만료도 기다립니다.
-2. 웹 실험의 **이어서 학습**을 선택합니다. Stale 상세에서는 종료 근거를 입력합니다. CLI는 `npm run cli -- jobs resume JOB_ID --evidence '이전 런타임이 종료된 것을 확인했습니다'`입니다. 종료 처리된 interrupted/failed/cancelled에는 evidence를 생략할 수 있습니다.
+1. 이전 런타임의 종료를 확인합니다. Heartbeat가 끊기면 lease 만료 후 interrupted로 바뀝니다.
+2. 웹 실험의 **이어서 학습**을 선택합니다. Lease 만료 처리가 아직 진행 중인 stale 상세에서는 종료 근거를 입력할 수 있습니다. CLI는 `npm run cli -- jobs resume JOB_ID --evidence '이전 런타임이 종료된 것을 확인했습니다'`입니다. 종료 처리된 interrupted/failed/cancelled에는 evidence를 생략할 수 있습니다.
 3. 같은 GRT commit·소스·prepared 데이터·world size의 새 런타임에서 큐 worker를 실행합니다. 데이터 다운로드를 원하면 `--prepared-from-server`를 선택합니다.
 4. Worker가 snapshot의 설정·데이터·last/best 관계를 검사하고 preflight 단계에서 학습 상태를 복원합니다. 기존 microbatch·accumulation과 W&B run ID도 유지하며 새 attempt에 이력을 남깁니다.
 

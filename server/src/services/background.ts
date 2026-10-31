@@ -6,7 +6,7 @@ import { finished } from 'node:stream/promises';
 import archiver from 'archiver';
 import type { Database, RecordData } from '../db/index.js';
 import { ApiError, assert, canonical, now } from '../util.js';
-import { compileSchema } from './experiments.js';
+import { compileSchema, posthocApplies } from './experiments.js';
 import type { Storage } from './storage.js';
 
 export class Background {
@@ -28,20 +28,23 @@ export class Background {
     await this.busy;
   }
   async tick() {
+    // Lease maintenance must continue while a large artifact is being verified.
+    await this.expireLeases().catch((error) => this.reportError(error));
     if (this.busy) return this.busy;
     this.busy = this.run()
-      .catch((e) => {
-        console.error(
-          JSON.stringify({
-            event: 'background.error',
-            code: e instanceof ApiError ? e.code : 'internal_error',
-          }),
-        );
-      })
+      .catch((error) => this.reportError(error))
       .finally(() => {
         this.busy = undefined;
       });
     return this.busy;
+  }
+  private reportError(error: unknown) {
+    console.error(
+      JSON.stringify({
+        event: 'background.error',
+        code: error instanceof ApiError ? error.code : 'internal_error',
+      }),
+    );
   }
   private async run() {
     for (const a of (await this.db.list('artifacts')).filter((a) => a.status === 'verifying'))
@@ -53,6 +56,37 @@ export class Background {
     await this.retireResumeSnapshots();
     for (const job of (await this.db.list('jobs')).filter((j) => j.status === 'deleting'))
       await this.deleteJob(job);
+  }
+  private async expireLeases() {
+    await this.db.write(async (tx) => {
+      for (const attempt of await tx.list('attempts')) {
+        if (
+          attempt.status !== 'running' ||
+          (Date.parse(attempt.lease_expires_at) > Date.now() &&
+            Date.parse(attempt.deadline_at) > Date.now())
+        )
+          continue;
+        const job = await tx.get('jobs', attempt.job_id);
+        if (job?.status !== 'running' || job.active_attempt_id !== attempt.id) continue;
+        const status = job.cancel_requested ? 'cancelled' : 'interrupted';
+        const validation_error = {
+          code: 'worker_lease_expired',
+          message: 'Worker heartbeat expired; execution was interrupted',
+        };
+        const finished_at = now();
+        await tx.put('attempts', { ...attempt, status, finished_at, validation_error });
+        await tx.put('jobs', {
+          ...job,
+          status,
+          finished_at,
+          validation_error,
+          active_attempt_id: null,
+        });
+        const worker = await tx.get('workers', attempt.worker_id);
+        if (worker?.active_attempt_id === attempt.id)
+          await tx.put('workers', { ...worker, active_attempt_id: null });
+      }
+    });
   }
   private async retireResumeSnapshots() {
     const artifacts = await this.db.list('artifacts');
@@ -321,6 +355,7 @@ export class Background {
         );
         assert(
           !job.policy.require_posthoc ||
+            !posthocApplies(job) ||
             (m.posthoc_completed && reportJson.posthoc_completed === true),
           422,
           'posthoc_incomplete',
@@ -342,6 +377,10 @@ export class Background {
         ...current,
         status,
         validation_error: validationError,
+        summary: {
+          ...current.summary,
+          ...(!posthocApplies(job) ? { posthoc_status: 'skipped' } : {}),
+        },
         finished_at: now(),
         active_attempt_id: null,
       });
